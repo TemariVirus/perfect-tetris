@@ -1,9 +1,7 @@
 pub const bit_masks = @import("bit_masks.zig");
 pub const movegen = @import("movegen.zig");
-pub const movegen_slow = @import("slow/movegen.zig");
 pub const next = @import("next.zig");
 pub const pc = @import("pc.zig");
-pub const pc_slow = @import("slow/pc.zig");
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -22,76 +20,9 @@ const Position = engine.pieces.Position;
 
 const NNInner = @import("zmai").genetic.neat.NN;
 
-var default_nn: ?NN = null;
-var load_default_nn = std.once((struct {
-    var buffer: [1024]u8 = undefined;
-
-    pub fn load() void {
-        var fba = std.heap.FixedBufferAllocator.init(&buffer);
-        default_nn = loadNNFromStr(fba.allocator(), @embedFile("nn_4l_json"));
-    }
-}).load);
-pub fn defaultNN(allocator: Allocator) !NN {
-    load_default_nn.call();
-    return try default_nn.?.clone(allocator);
-}
-
 pub const Placement = struct {
     piece: Piece,
     pos: Position,
-};
-
-pub const NN = struct {
-    pub const INPUT_COUNT = 9;
-
-    net: NNInner,
-    inputs_used: [INPUT_COUNT]bool,
-
-    pub fn load(allocator: Allocator, path: []const u8) !NN {
-        var inputs_used: [INPUT_COUNT]bool = undefined;
-        const nn = try NNInner.load(allocator, path, &inputs_used);
-        return .{
-            .net = nn,
-            .inputs_used = inputs_used,
-        };
-    }
-
-    pub fn deinit(self: NN, allocator: Allocator) void {
-        self.net.deinit(allocator);
-    }
-
-    pub fn predict(self: NN, input: [INPUT_COUNT]f32) f32 {
-        var output: [1]f32 = undefined;
-        self.net.predict(&input, &output);
-        return output[0];
-    }
-
-    /// Creates a deep copy of the neural network.
-    pub fn clone(self: NN, allocator: Allocator) !NN {
-        const nodes = try allocator.dupe(NNInner.Node, self.net.nodes);
-        errdefer allocator.free(nodes);
-
-        const connections = try allocator.dupe(
-            NNInner.Connection,
-            self.net.connections.items[0..self.net.connections.flatLen()],
-        );
-        errdefer allocator.free(connections);
-        const connection_splits = try allocator.dupe(u32, self.net.connections.splits);
-        errdefer allocator.free(connection_splits);
-
-        return .{
-            .net = .{
-                .nodes = nodes,
-                .connections = .{
-                    .items = connections.ptr,
-                    .splits = connection_splits,
-                },
-                .hidden_activation = self.net.hidden_activation,
-                .output_activation = self.net.output_activation,
-            },
-            .inputs_used = self.inputs_used,
-        };
-    }
 };
 
 pub const PCSolution = struct {
@@ -224,87 +155,6 @@ pub fn minPcInfo(playfield: BoardMask) ?struct {
     return .{
         .height = @intCast(height),
         .pieces_needed = @intCast(pieces_needed),
-    };
-}
-
-/// Finds a perfect clear with the least number of pieces possible for the
-/// given game state, and returns the sequence of placements required to
-/// achieve it.
-///
-/// `min_height` determines the minimum height of the perfect clear.
-///
-/// `max_len` determines the maximum number of placements.
-///
-/// `save_hold` determines what piece must be in the hold slot at the end of
-/// the sequence. If `save_hold` is `null`, this constraint is ignored.
-///
-/// Returns an error if no perfect clear exists, or if the number of pieces
-/// needed exceeds `max_pieces`.
-pub fn findPcAuto(
-    comptime BagType: type,
-    allocator: Allocator,
-    game: GameState(BagType),
-    nn: ?NN,
-    min_height: u7,
-    max_len: usize,
-    save_hold: ?PieceKind,
-) ![]Placement {
-    const placements = try allocator.alloc(Placement, max_len);
-    errdefer allocator.free(placements);
-    const height = @max(
-        min_height,
-        (minPcInfo(game.playfield) orelse return FindPcError.NoPcExists).height,
-    );
-
-    const resolved_nn = nn orelse try defaultNN(allocator);
-    defer if (nn == null) resolved_nn.deinit(allocator);
-
-    // Use fast pc if possible
-    if (height <= 6) {
-        if (pc.findPc(
-            BagType,
-            allocator,
-            game,
-            resolved_nn,
-            @intCast(height),
-            placements,
-            save_hold,
-        )) |solution| {
-            assert(allocator.resize(placements, solution.len));
-            return solution;
-        } else |e| if (e != FindPcError.SolutionTooLong) {
-            return e;
-        }
-    }
-
-    const solution = try pc_slow.findPc(
-        BagType,
-        allocator,
-        game,
-        resolved_nn,
-        @max(7, height),
-        placements,
-        save_hold,
-    );
-    assert(allocator.resize(placements, solution.len));
-    return solution;
-}
-
-pub fn loadNNFromStr(allocator: Allocator, json_str: []const u8) NN {
-    const obj = json.parseFromSlice(
-        NNInner.NNJson,
-        allocator,
-        json_str,
-        .{ .ignore_unknown_fields = true },
-    ) catch unreachable;
-    defer obj.deinit();
-
-    var inputs_used: [NN.INPUT_COUNT]bool = undefined;
-    const _nn =
-        NNInner.fromJson(allocator, obj.value, &inputs_used) catch unreachable;
-    return NN{
-        .net = _nn,
-        .inputs_used = inputs_used,
     };
 }
 
