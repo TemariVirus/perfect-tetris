@@ -209,7 +209,7 @@ pub fn allPlacements(
     do_o_rotations: bool,
     kicks: *const KickFn,
     piece_kind: PieceKind,
-    max_height: u6,
+    max_height: u3,
 ) PiecePosSet {
     return allPlacementsRaw(
         PiecePosSet,

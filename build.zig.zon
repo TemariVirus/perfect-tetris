@@ -7,12 +7,8 @@
             .hash = "1220cfca64e5c4c740db01039a1743e4cd6f4e09ac1a029367fb73dfb4c88fc54e52",
         },
         .vaxis = .{
-            .url = "git+https://github.com/rockorager/libvaxis#1961712c1f0cf46b235dd31418dc1b52442abbd5",
-            .hash = "12208cfdda4d5fdbc81b0c44b82e4d6dba2d4a86bff644a153e026fdfc80f8469133",
-        },
-        .zmai = .{
-            .url = "git+https://github.com/TemariVirus/zmai#fa4f6af39bb185555221346a6d3395cfb31258be",
-            .hash = "12205906277f0eaff4417d1cf18062e8e30331868f100a93684f1ef5708fd11d6c4b",
+            .url = "git+https://github.com/rockorager/libvaxis#v0.5.1",
+            .hash = "1220de23a3240e503397ea579de4fd85db422f537e10036ef74717c50164475813ce",
         },
         .@"zig-args" = .{
             .url = "git+https://github.com/ikskuh/zig-args#03af1b6c5bfda9646a562c861055024daed5b238",
