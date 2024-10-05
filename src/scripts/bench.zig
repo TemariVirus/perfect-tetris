@@ -9,7 +9,7 @@ const pc = root.pc;
 const FixedBag = root.FixedBag;
 
 pub fn main() !void {
-    // Time: 38.247s
+    // Time: 34.988s
     try pcBenchmark(4);
 }
 
