@@ -6,6 +6,7 @@ pub const pc = @import("pc.zig");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const AnyReader = std.io.AnyReader;
+const AnyWriter = std.io.AnyWriter;
 const assert = std.debug.assert;
 const expect = std.testing.expect;
 const json = std.json;
@@ -78,6 +79,29 @@ pub const PCSolution = struct {
         }
 
         return solution;
+    }
+
+    pub fn write(self: PCSolution, writer: AnyWriter) !void {
+        var holds: u16 = 0;
+        var hold: PieceKind = self.next.buffer[0];
+        for (self.placements.slice(), 1..) |placement, i| {
+            if (placement.piece.kind != self.next.buffer[i]) {
+                holds |= @as(u16, 1) << @intCast(i - 1);
+                hold = self.next.buffer[i];
+            }
+        }
+
+        try writer.writeInt(u48, packNext(self.next), .little);
+        try writer.writeInt(u16, holds, .little);
+
+        for (self.placements.slice()) |placement| {
+            const facing: u8 = @intFromEnum(placement.piece.facing);
+            const canon_pos = placement.piece.canonicalPosition(placement.pos);
+            const pos: u8 = @intCast(canon_pos.y * 10 + canon_pos.x);
+            assert(pos < 60);
+            const byte = facing | (pos << 2);
+            try writer.writeByte(byte);
+        }
     }
 
     /// Packs a next sequence into a u48.

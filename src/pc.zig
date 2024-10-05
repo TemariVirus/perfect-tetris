@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const expect = std.testing.expect;
@@ -7,28 +8,30 @@ const engine = @import("engine");
 const Facing = engine.pieces.Facing;
 const GameState = engine.GameState;
 const KickFn = engine.kicks.KickFn;
+const Piece = engine.pieces.Piece;
 const PieceKind = engine.pieces.PieceKind;
+const Position = engine.pieces.Position;
 const Rotation = engine.kicks.Rotation;
 const SevenBag = engine.bags.SevenBag;
 
 const root = @import("root.zig");
 const BoardMask = root.bit_masks.BoardMask;
 const movegen = root.movegen;
-const NN = root.NN;
 const PieceMask = root.bit_masks.PieceMask;
 const Placement = root.Placement;
 
-const SearchNode = packed struct {
+const Node = packed struct {
     playfield: u40,
     held: PieceKind,
     height: u3,
 };
-// TODO: compare performance iwth AutoHashMap
-const NodeSet = std.AutoArrayHashMap(SearchNode, void);
+const NodeParents = std.ArrayListUnmanaged(struct { Node, Placement });
+const Graph = std.AutoHashMap(Node, NodeParents);
+
+const ColorArray = std.PackedIntArray(u4, 40);
 
 const FindPcError = root.FindPcError;
-
-pub fn findPc(
+pub fn findAllPcs(
     comptime BagType: type,
     allocator: Allocator,
     game: GameState(BagType),
@@ -46,69 +49,22 @@ pub fn findPc(
     {
         return FindPcError.NoPcExists;
     }
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    const arena_alloc = arena.allocator();
+    defer arena.deinit();
+
     const pieces_needed = pc_info.pieces_needed + (height - pc_info.height) / 2 * 5;
+    const pieces = try getPieces(BagType, arena_alloc, game, pieces_needed + 1);
+    const graph, const leaves = try generateGraph(
+        arena_alloc,
+        @truncate(playfield.mask),
+        pieces,
+        height,
+        game.kicks,
+    );
 
-    const pieces = try getPieces(BagType, allocator, game, pieces_needed + 1);
-    defer allocator.free(pieces);
-
-    const do_o_rotations = hasOKicks(game.kicks);
-
-    var curr = NodeSet.init(allocator);
-    defer curr.deinit();
-    var next = NodeSet.init(allocator);
-    defer next.deinit();
-
-    // Root node
-    try curr.put(.{
-        .playfield = @truncate(playfield.mask),
-        .held = pieces[0],
-        .height = height,
-    }, {});
-
-    for (pieces[1..]) |current| {
-        while (curr.popOrNull()) |kv| {
-            const pf = BoardMask{ .mask = kv.key.playfield };
-            const hold = kv.key.held;
-            const h = kv.key.height;
-
-            for ([_]PieceKind{ current, hold }) |p| {
-                const moves = movegen.allPlacements(
-                    pf,
-                    do_o_rotations,
-                    game.kicks,
-                    p,
-                    h,
-                );
-
-                var iter = moves.iterator(p);
-                while (iter.next()) |placement| {
-                    var board = pf;
-                    board.place(PieceMask.from(placement.piece), placement.pos);
-                    const cleared = board.clearLines(placement.pos.y);
-                    const new_h = h - cleared;
-                    if (!isPcPossible(board, new_h)) {
-                        continue;
-                    }
-
-                    try next.put(.{
-                        .playfield = @truncate(board.mask),
-                        .held = if (p == hold) current else hold,
-                        .height = new_h,
-                    }, {});
-                }
-
-                if (current == hold) {
-                    break;
-                }
-            }
-        }
-
-        std.mem.swap(NodeSet, &curr, &next);
-        next.clearRetainingCapacity();
-        std.debug.print("{}\n", .{curr.count()});
-    }
-
-    return &.{};
+    return try getSolutions(allocator, graph, leaves);
 }
 
 /// Extracts `pieces_count` pieces from the game state, in the format
@@ -167,6 +123,97 @@ pub fn hasOKicks(kicks: *const KickFn) bool {
     return false;
 }
 
+pub fn generateGraph(
+    allocator: Allocator,
+    root_mask: u40,
+    pieces: []PieceKind,
+    max_height: u3,
+    kicks: *const KickFn,
+) !struct { Graph, []Node } {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    const arena_alloc = arena.allocator();
+    errdefer arena.deinit();
+
+    var graph = Graph.init(arena_alloc);
+    var curr = std.ArrayList(Node).init(arena_alloc);
+    var next = std.ArrayList(Node).init(allocator);
+    defer next.deinit();
+
+    // Root node
+    {
+        const n = Node{
+            .playfield = root_mask,
+            .held = pieces[0],
+            .height = max_height,
+        };
+        try curr.append(n);
+        try graph.putNoClobber(n, NodeParents{});
+    }
+
+    const do_o_rotations = hasOKicks(kicks);
+    for (pieces[1..], 1..) |current, i| {
+        for (curr.items) |node| {
+            const pf = BoardMask{ .mask = node.playfield };
+            const hold = node.held;
+            const h = node.height;
+
+            var is_leaf = true;
+            for ([_]PieceKind{ current, hold }) |p| {
+                const moves = movegen.allPlacements(
+                    pf,
+                    do_o_rotations,
+                    kicks,
+                    p,
+                    h,
+                );
+
+                var iter = moves.iterator(p);
+                while (iter.next()) |placement| {
+                    var new_pf = pf;
+                    new_pf.place(PieceMask.from(placement.piece), placement.pos);
+                    const cleared = new_pf.clearLines(placement.pos.y);
+                    const new_h = h - cleared;
+                    if (!isPcPossible(new_pf, new_h)) {
+                        continue;
+                    }
+
+                    const n = Node{
+                        .playfield = @truncate(new_pf.mask),
+                        .held = if (p == hold) current else hold,
+                        .height = new_h,
+                    };
+                    const result = try graph.getOrPut(n);
+                    if (!result.found_existing) {
+                        try next.append(n);
+                        result.value_ptr.* = NodeParents{};
+                    }
+                    try result.value_ptr.append(arena_alloc, .{
+                        node,
+                        placement,
+                    });
+                    is_leaf = false;
+                }
+
+                if (current == hold) {
+                    break;
+                }
+            }
+
+            // Remove unnecessary leaf nodes to save RAM
+            if (is_leaf) {
+                assert(graph.remove(node));
+            }
+        }
+
+        std.mem.swap(std.ArrayList(Node), &curr, &next);
+        next.clearRetainingCapacity();
+        std.debug.print("{}: {} nodes\n", .{ i, curr.items.len });
+    }
+
+    std.debug.print("Graph nodes: {}\n", .{graph.count()});
+    return .{ graph, try curr.toOwnedSlice() };
+}
+
 /// A fast check to see if a perfect clear is possible by making sure every
 /// empty "segment" of the playfield has a multiple of 4 cells. Assumes the
 /// total number of empty cells is a multiple of 4.
@@ -205,4 +252,132 @@ pub fn isPcPossible(playfield: BoardMask, max_height: u3) bool {
     // The remaining empty cells must also be a multiple of 4, so we don't need
     // to  check the leftmost segment
     return true;
+}
+
+pub fn getSolutions(allocator: Allocator, graph: Graph, leaves: []Node) ![][]Placement {
+    if (leaves.len == 0) {
+        return &.{};
+    }
+
+    var solutions = std.ArrayList([]Placement).init(allocator);
+    errdefer {
+        for (solutions.items) |solution| {
+            allocator.free(solution);
+        }
+        solutions.deinit();
+    }
+
+    const solution_len = blk: {
+        var l: u8 = 0;
+        var parents = graph.get(leaves[0]).?.items;
+        while (parents.len > 0) : (l += 1) {
+            parents = graph.get(parents[0][0]).?.items;
+        }
+        break :blk l;
+    };
+    const sol = try allocator.alloc(Placement, solution_len);
+    defer allocator.free(sol);
+
+    var stack = std.ArrayList(struct { Node, Placement, u8 }).init(allocator);
+    defer stack.deinit();
+    for (leaves) |node| {
+        for (graph.get(node).?.items) |item| {
+            try stack.append(.{
+                item[0],
+                item[1],
+                1,
+            });
+        }
+    }
+
+    // Get all paths that lead to the root to extract solutions
+    var seen = std.AutoHashMap(ColorArray, void).init(allocator);
+    defer seen.deinit();
+    while (stack.popOrNull()) |kv| {
+        const node = kv[0];
+        const placement = kv[1];
+        const d = kv[2];
+
+        for (graph.get(node).?.items) |item| {
+            try stack.append(.{
+                item[0],
+                item[1],
+                d + 1,
+            });
+        }
+
+        sol[sol.len - d] = placement;
+        // Check if we reached the root
+        if (d == sol.len) {
+            const board = drawMatrix(sol);
+            if ((try seen.getOrPut(board)).found_existing) {
+                continue;
+            }
+            try solutions.append(try allocator.dupe(Placement, sol));
+        }
+    }
+
+    return try solutions.toOwnedSlice();
+}
+
+/// Get the positions of the minos of a piece relative to the bottom left
+/// corner.
+fn getMinos(piece: Piece) [4]Position {
+    const mask = piece.mask().rows;
+    var minos: [4]Position = undefined;
+    var i: usize = 0;
+
+    // Make sure minos are sorted highest first
+    var y: i8 = 3;
+    while (y >= 0) : (y -= 1) {
+        for (0..10) |x| {
+            if ((mask[@intCast(y)] >> @intCast(10 - x)) & 1 == 1) {
+                minos[i] = .{ .x = @intCast(x), .y = y };
+                i += 1;
+            }
+        }
+    }
+    assert(i == 4);
+
+    return minos;
+}
+
+fn drawMatrixPiece(
+    board: *ColorArray,
+    row_occupancy: []u8,
+    piece: Piece,
+    pos: Position,
+) void {
+    const minos = getMinos(piece);
+    for (minos) |mino| {
+        const cleared = blk: {
+            var cleared: i8 = 0;
+            var top = pos.y + mino.y;
+            var i: usize = 0;
+            // Any clears below the mino will push it up.
+            while (i <= top) : (i += 1) {
+                if (row_occupancy[i] >= 10) {
+                    cleared += 1;
+                    top += 1;
+                }
+            }
+            break :blk cleared;
+        };
+
+        const mino_x: u8 = @intCast(pos.x + mino.x);
+        // The y coordinate is flipped when converting to nterm coordinates.
+        const mino_y: u8 = @intCast(pos.y + mino.y + cleared);
+        board.set(mino_y * 10 + mino_x, @intFromEnum(piece.kind));
+
+        row_occupancy[mino_y] += 1;
+    }
+}
+
+fn drawMatrix(placements: []const Placement) ColorArray {
+    var board = ColorArray.initAllTo(7);
+    var row_occupancy = [_]u8{0} ** 4;
+    for (placements) |p| {
+        drawMatrixPiece(&board, &row_occupancy, p.piece, p.pos);
+    }
+    return board;
 }
