@@ -25,9 +25,35 @@ const Node = packed struct {
     held: PieceKind,
     height: u3,
 };
-const NodeParents = std.ArrayListUnmanaged(struct { Node, Placement });
-const Graph = std.AutoHashMap(Node, NodeParents);
+const NodeParent = packed struct {
+    node: Node,
+    piece: Piece,
+    pos: u6,
+};
+const NodeParents = struct {
+    ptr: [*]NodeParent = undefined,
+    len: u32 = 0,
+    capacity: u32 = 0,
 
+    const List = std.ArrayListUnmanaged(NodeParent);
+
+    pub fn to(self: NodeParents) List {
+        return .{
+            .items = self.ptr[0..self.len],
+            .capacity = self.capacity,
+        };
+    }
+
+    pub fn from(list: List) NodeParents {
+        return .{
+            .ptr = @ptrCast(list.items.ptr),
+            .len = @intCast(list.items.len),
+            .capacity = @intCast(list.capacity),
+        };
+    }
+};
+
+const Graph = std.AutoHashMap(Node, NodeParents);
 const ColorArray = std.PackedIntArray(u4, 40);
 
 const FindPcError = root.FindPcError;
@@ -151,8 +177,7 @@ pub fn generateGraph(
     }
 
     const do_o_rotations = hasOKicks(kicks);
-    for (pieces[1..], 1..) |current, i| {
-        _ = i; // autofix
+    for (pieces[1..]) |current| {
         for (curr.items) |node| {
             const pf = BoardMask{ .mask = node.playfield };
             const hold = node.held;
@@ -188,10 +213,15 @@ pub fn generateGraph(
                         try next.append(n);
                         result.value_ptr.* = NodeParents{};
                     }
-                    try result.value_ptr.append(arena_alloc, .{
-                        node,
-                        placement,
+                    var temp = result.value_ptr.to();
+                    try temp.append(arena_alloc, .{
+                        .node = node,
+                        .piece = placement.piece,
+                        .pos = @intCast((placement.pos.y - placement.piece.minY()) *
+                            BoardMask.WIDTH +
+                            (placement.pos.x - placement.piece.minX())),
                     });
+                    result.value_ptr.* = NodeParents.from(temp);
                     is_leaf = false;
                 }
 
@@ -202,7 +232,8 @@ pub fn generateGraph(
 
             // Remove unnecessary leaf nodes to save RAM
             if (is_leaf) {
-                assert(graph.remove(node));
+                const removed = graph.remove(node);
+                assert(removed);
             }
         }
 
@@ -268,9 +299,9 @@ pub fn getSolutions(allocator: Allocator, graph: Graph, leaves: []Node) ![][]Pla
 
     const solution_len = blk: {
         var l: u8 = 0;
-        var parents = graph.get(leaves[0]).?.items;
+        var parents = graph.get(leaves[0]).?.to().items;
         while (parents.len > 0) : (l += 1) {
-            parents = graph.get(parents[0][0]).?.items;
+            parents = graph.get(parents[0].node).?.to().items;
         }
         break :blk l;
     };
@@ -280,10 +311,16 @@ pub fn getSolutions(allocator: Allocator, graph: Graph, leaves: []Node) ![][]Pla
     var stack = std.ArrayList(struct { Node, Placement, u8 }).init(allocator);
     defer stack.deinit();
     for (leaves) |node| {
-        for (graph.get(node).?.items) |item| {
+        for (graph.get(node).?.to().items) |item| {
             try stack.append(.{
-                item[0],
-                item[1],
+                item.node,
+                .{
+                    .piece = item.piece,
+                    .pos = .{
+                        .x = @as(i8, (item.pos % BoardMask.WIDTH)) + item.piece.minX(),
+                        .y = @as(i8, (item.pos / BoardMask.WIDTH)) + item.piece.minY(),
+                    },
+                },
                 1,
             });
         }
@@ -292,15 +329,21 @@ pub fn getSolutions(allocator: Allocator, graph: Graph, leaves: []Node) ![][]Pla
     // Get all paths that lead to the root to extract solutions
     var seen = std.AutoHashMap(ColorArray, void).init(allocator);
     defer seen.deinit();
-    while (stack.popOrNull()) |kv| {
-        const node = kv[0];
-        const placement = kv[1];
-        const d = kv[2];
+    while (stack.popOrNull()) |stackframe| {
+        const node = stackframe[0];
+        const placement = stackframe[1];
+        const d = stackframe[2];
 
-        for (graph.get(node).?.items) |item| {
+        for (graph.get(node).?.to().items) |item| {
             try stack.append(.{
-                item[0],
-                item[1],
+                item.node,
+                .{
+                    .piece = item.piece,
+                    .pos = .{
+                        .x = @as(i8, (item.pos % BoardMask.WIDTH)) + item.piece.minX(),
+                        .y = @as(i8, (item.pos / BoardMask.WIDTH)) + item.piece.minY(),
+                    },
+                },
                 d + 1,
             });
         }
