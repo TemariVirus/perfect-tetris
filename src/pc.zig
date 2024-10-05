@@ -152,6 +152,7 @@ pub fn generateGraph(
 
     const do_o_rotations = hasOKicks(kicks);
     for (pieces[1..], 1..) |current, i| {
+        _ = i; // autofix
         for (curr.items) |node| {
             const pf = BoardMask{ .mask = node.playfield };
             const hold = node.held;
@@ -207,10 +208,8 @@ pub fn generateGraph(
 
         std.mem.swap(std.ArrayList(Node), &curr, &next);
         next.clearRetainingCapacity();
-        std.debug.print("{}: {} nodes\n", .{ i, curr.items.len });
     }
 
-    std.debug.print("Graph nodes: {}\n", .{graph.count()});
     return .{ graph, try curr.toOwnedSlice() };
 }
 

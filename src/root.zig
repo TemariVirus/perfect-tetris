@@ -4,26 +4,50 @@ pub const next = @import("next.zig");
 pub const pc = @import("pc.zig");
 
 const std = @import("std");
-const Allocator = std.mem.Allocator;
 const AnyReader = std.io.AnyReader;
 const AnyWriter = std.io.AnyWriter;
 const assert = std.debug.assert;
-const expect = std.testing.expect;
-const json = std.json;
 
 const engine = @import("engine");
 const BoardMask = engine.bit_masks.BoardMask;
 const Facing = engine.pieces.Facing;
-const GameState = engine.GameState;
 const Piece = engine.pieces.Piece;
 const PieceKind = engine.pieces.PieceKind;
 const Position = engine.pieces.Position;
 
-const NNInner = @import("zmai").genetic.neat.NN;
+pub const FindPcError = error{
+    ImpossibleSaveHold,
+    NoPcExists,
+    SolutionTooLong,
+};
 
 pub const Placement = struct {
     piece: Piece,
     pos: Position,
+};
+
+pub const FixedBag = struct {
+    pieces: []const PieceKind,
+    index: usize = 0,
+
+    pub fn init(seed: u64) FixedBag {
+        _ = seed; // autofix
+        return .{ .pieces = &.{} };
+    }
+
+    pub fn next(self: *FixedBag) PieceKind {
+        if (self.index >= self.pieces.len) {
+            return undefined;
+        }
+
+        defer self.index += 1;
+        return self.pieces[self.index];
+    }
+
+    pub fn setSeed(self: *FixedBag, seed: u64) void {
+        _ = seed; // autofix
+        self.index = 0;
+    }
 };
 
 pub const PCSolution = struct {
@@ -131,12 +155,6 @@ pub const PCSolution = struct {
         }
         return pieces;
     }
-};
-
-pub const FindPcError = error{
-    ImpossibleSaveHold,
-    NoPcExists,
-    SolutionTooLong,
 };
 
 /// Returns the minimum possible height and number of pieces needed for a
