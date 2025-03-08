@@ -2,9 +2,9 @@ const std = @import("std");
 const json = std.json;
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
-    defer _ = gpa.deinit();
+    var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
+    defer _ = debug_allocator.deinit();
+    const allocator = debug_allocator.allocator();
 
     var args = try std.process.argsWithAllocator(allocator);
     defer args.deinit();
@@ -18,9 +18,9 @@ pub fn main() !void {
     var reader = json.reader(allocator, file.reader());
     defer reader.deinit();
 
-    var arena = std.heap.ArenaAllocator.init(allocator);
+    var arena: std.heap.ArenaAllocator = .init(allocator);
     defer arena.deinit();
-    const value = try json.Value.jsonParse(
+    const value: json.Value = try .jsonParse(
         arena.allocator(),
         &reader,
         .{ .max_value_len = 1_000_000 },

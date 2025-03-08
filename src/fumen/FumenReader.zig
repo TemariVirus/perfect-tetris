@@ -28,7 +28,7 @@ const FIELD_LEN = FIELD_WIDTH * FIELD_HEIGHT;
 
 const b64_encode = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const b64_decode = blk: {
-    var table = [_]?u6{null} ** 256;
+    var table: [256]?u6 = @splat(null);
     for (b64_encode, 0..) |char, i| {
         table[char] = i;
     }
@@ -36,7 +36,7 @@ const b64_decode = blk: {
 };
 
 const caption_encode = blk: {
-    var table = [_]?u7{null} ** 256;
+    var table: [256]?u7 = @splat(null);
     for (caption_decode, 0..) |char, i| {
         table[char] = i;
     }
@@ -50,7 +50,7 @@ allocator: Allocator,
 data: []const u8,
 pos: usize = 0,
 // Extra data kept accross pages for bookkeeping
-field: [FIELD_LEN]FumenBlock = [_]FumenBlock{.empty} ** FIELD_LEN,
+field: [FIELD_LEN]FumenBlock = @splat(.empty),
 field_repeat: u6 = 0,
 hold: ?PieceKind = null,
 current: ?PieceKind = null,
@@ -254,7 +254,7 @@ const QuizWriter = struct {
 
         // Escape characters
         try self.writeRaw(writer, '%');
-        for (std.fmt.bytesToHex([_]u8{char}, .upper)) |h| {
+        for (std.fmt.bytesToHex([1]u8{char}, .upper)) |h| {
             try self.writeRaw(writer, h);
         }
     }
@@ -285,7 +285,7 @@ pub fn parse(
     allocator: Allocator,
     fumen: []const u8,
 ) AllocOrFumenError!ParsedFumen {
-    var reader = try FumenReader.init(allocator, fumen);
+    var reader: FumenReader = try .init(allocator, fumen);
     errdefer reader.deinit();
 
     while (!reader.done()) {
@@ -295,7 +295,7 @@ pub fn parse(
         return FumenError.InvalidFieldRepeat;
     }
 
-    var parsed = try ParsedFumen.init(&reader);
+    var parsed: ParsedFumen = try .init(&reader);
     parsed.reader.data = fumen;
     return parsed;
 }
@@ -390,7 +390,7 @@ fn init(allocator: Allocator, fumen: []const u8) FumenError!FumenReader {
         .allocator = allocator,
         // + 4 to skip the "115@" prefix
         .data = fumen[start + 4 .. end],
-        .next = NextArray.init(allocator),
+        .next = .init(allocator),
     };
 }
 
@@ -428,7 +428,7 @@ fn poll(self: *FumenReader, n: usize) FumenError!u32 {
 }
 
 fn unpoll(comptime n: usize, v: u32) [n]u8 {
-    var result = [_]u8{undefined} ** n;
+    var result: [n]u8 = undefined;
     var _v = v;
     for (0..n) |i| {
         result[i] = b64_encode[_v % 64];
@@ -493,7 +493,7 @@ fn readPieceAndFlags(self: *FumenReader) FumenError!struct {
 } {
     var v = try self.poll(3);
 
-    const piece = blk: {
+    const piece: ?Piece = blk: {
         const block: FumenBlock = @enumFromInt(v % 8);
         v /= 8;
         const rotation: FumenRotation = @enumFromInt(v % 4);
@@ -507,7 +507,7 @@ fn readPieceAndFlags(self: *FumenReader) FumenError!struct {
             };
     };
 
-    const pos = blk: {
+    const pos: ?Position = blk: {
         const location = v % FIELD_LEN;
         break :blk if (piece) |p| (Position{
             .x = @intCast(location % FIELD_WIDTH),
@@ -578,7 +578,7 @@ fn writePieceAndFlags(
 
 fn readCaption(self: *FumenReader) AllocOrFumenError![]u8 {
     const len = try self.poll(2);
-    var caption = try std.ArrayList(u8).initCapacity(self.allocator, len);
+    var caption: std.ArrayList(u8) = try .initCapacity(self.allocator, len);
     errdefer caption.deinit();
 
     var i: u32 = 0;
@@ -627,7 +627,7 @@ fn readCaption(self: *FumenReader) AllocOrFumenError![]u8 {
         };
         write +=
             unicode.utf8Encode(codepoint, caption.items[write..]) catch
-            return FumenError.InvalidCaption;
+                return FumenError.InvalidCaption;
         continue;
     }
 
@@ -823,7 +823,7 @@ fn readPage(self: *FumenReader) AllocOrFumenError!void {
         if (mem.startsWith(u8, caption, "#Q=")) {
             try self.readQuiz(caption[3..]);
             if (self.current == null) {
-                self.current = self.next.popOrNull();
+                self.current = self.next.pop();
             }
         } else {
             // Else empty quiz state
@@ -881,13 +881,13 @@ fn readPage(self: *FumenReader) AllocOrFumenError!void {
         if (p.kind != self.current) {
             mem.swap(?PieceKind, &self.current, &self.hold);
             if (self.current == null) {
-                self.current = self.next.popOrNull();
+                self.current = self.next.pop();
             }
         }
         if (p.kind != self.current) {
             return FumenError.InvalidQuizPiece;
         }
-        self.current = self.next.popOrNull();
+        self.current = self.next.pop();
     }
     self.clearLines();
 

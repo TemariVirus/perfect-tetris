@@ -23,6 +23,12 @@ const root = @import("perfect-tetris");
 const NN = root.NN;
 const pc = root.pc;
 
+const IS_DEBUG = switch (@import("builtin").mode) {
+    .Debug, .ReleaseSafe => true,
+    .ReleaseFast, .ReleaseSmall => false,
+};
+var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
+
 // Height of perfect clears to find
 const HEIGHT = 4;
 comptime {
@@ -36,7 +42,7 @@ const SAVE_DIR = "pops/relu-identity/";
 
 const GENERATIONS = 50;
 const POPULATION_SIZE = 500;
-const OPTIONS = Trainer.Options{
+const OPTIONS: Trainer.Options = .{
     .species_target = 15,
     .mutate_options = .{
         .node_add_prob = 0.04,
@@ -49,7 +55,7 @@ const OPTIONS = Trainer.Options{
     },
 };
 
-var saving_threads = AtomicInt.init(0);
+var saving_threads: AtomicInt = .init(0);
 
 const SaveJson = struct {
     seed: u64,
@@ -61,9 +67,13 @@ pub fn main() !void {
     setupExitHandler();
     zmai.setRandomSeed(std.crypto.random.int(u64));
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
-    defer _ = gpa.deinit();
+    const allocator = if (IS_DEBUG)
+        debug_allocator.allocator()
+    else
+        std.heap.smp_allocator;
+    defer if (IS_DEBUG) {
+        _ = debug_allocator.deinit();
+    };
 
     var trainer, const fitnesses, var seed = try loadOrInit(
         allocator,
@@ -74,10 +84,10 @@ pub fn main() !void {
     defer trainer.deinit();
     defer allocator.free(fitnesses);
 
-    var fitnesses_lock = Mutex{};
+    var fitnesses_lock: Mutex = .{};
     var threads: [THREADS]std.Thread = undefined;
     for (&threads) |*thread| {
-        thread.* = try std.Thread.spawn(
+        thread.* = try .spawn(
             .{ .allocator = allocator },
             doWork,
             .{ &seed, &trainer, fitnesses, &fitnesses_lock },
@@ -87,7 +97,7 @@ pub fn main() !void {
         thread.join();
     };
 
-    var save_timer = PeriodicTrigger.init(SAVE_INTERVAL, true);
+    var save_timer: PeriodicTrigger = .init(SAVE_INTERVAL, true);
     outer: while (trainer.generation < GENERATIONS) {
         time.sleep(time.ns_per_ms);
         if (save_timer.trigger()) |_| {
@@ -150,7 +160,7 @@ fn setupExitHandler() void {
             _ = signal(sig, handleExitWindows);
         }
     } else {
-        const action = os.linux.Sigaction{
+        const action: os.linux.Sigaction = .{
             .handler = .{ .handler = handleExit },
             .mask = os.linux.empty_sigset,
             .flags = 0,
@@ -191,23 +201,22 @@ fn loadOrInit(
 ) !struct { Trainer, []?f64, u64 } {
     // Init if file does not exist
     fs.cwd().access(path, .{}) catch |e|
-        if (e == fs.Dir.AccessError.FileNotFound)
-    {
-        var trainer = try Trainer.init(
-            allocator,
-            population_size,
-            0.6,
-            options,
-        );
-        errdefer trainer.deinit();
-        const fitnesses = try allocator.alloc(?f64, population_size);
-        @memset(fitnesses, null);
-        return .{
-            trainer,
-            fitnesses,
-            std.crypto.random.int(u64),
-        };
-    } else return e;
+        if (e == fs.Dir.AccessError.FileNotFound) {
+            var trainer = try Trainer.init(
+                allocator,
+                population_size,
+                0.6,
+                options,
+            );
+            errdefer trainer.deinit();
+            const fitnesses = try allocator.alloc(?f64, population_size);
+            @memset(fitnesses, null);
+            return .{
+                trainer,
+                fitnesses,
+                std.crypto.random.int(u64),
+            };
+        } else return e;
 
     const file = try fs.cwd().openFile(path, .{});
     defer file.close();
@@ -223,7 +232,7 @@ fn loadOrInit(
     );
     defer parsed.deinit();
 
-    var trainer = try Trainer.from(allocator, parsed.value.trainer);
+    var trainer: Trainer = try .from(allocator, parsed.value.trainer);
     trainer.options = options;
     errdefer trainer.deinit();
 
@@ -260,7 +269,7 @@ fn save(
     _ = saving_threads.fetchAdd(1, .monotonic);
     defer _ = saving_threads.fetchSub(1, .monotonic);
 
-    const trainer_json = try Trainer.TrainerJson.init(allocator, trainer);
+    const trainer_json: Trainer.TrainerJson = try .init(allocator, trainer);
     defer trainer_json.deinit(allocator);
 
     try fs
@@ -292,15 +301,16 @@ fn saveSafe(
             _trainer: Trainer,
             _fitnesses: []?f64,
         ) !void {
-            var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-            const _allocator = gpa.allocator();
-            defer _ = gpa.deinit();
+            const _allocator = if (IS_DEBUG)
+                debug_allocator.allocator()
+            else
+                std.heap.smp_allocator;
 
             try save(_allocator, _path, _seed, _trainer, _fitnesses);
         }
     }.saveOnceThread;
 
-    const save_thread = try std.Thread.spawn(
+    const save_thread: std.Thread = try .spawn(
         .{ .allocator = allocator },
         saveOnceThread,
         .{ path, seed, trainer, fitnesses },
@@ -329,9 +339,10 @@ fn doWork(
     fitnesses: []?f64,
     fitnesses_lock: *Mutex,
 ) !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
-    defer _ = gpa.deinit();
+    const allocator = if (IS_DEBUG)
+        debug_allocator.allocator()
+    else
+        std.heap.smp_allocator;
 
     while (true) {
         const i = blk: {
@@ -355,7 +366,7 @@ fn doWork(
 
         // Update fitness of genome i
         var inputs_used: [OPTIONS.nn_options.input_count]bool = undefined;
-        var nn = try neat.NN.init(
+        var nn: neat.NN = try .init(
             allocator,
             trainer.population[i],
             OPTIONS.nn_options,
@@ -378,14 +389,14 @@ fn getFitness(allocator: Allocator, seed: u64, nn: NN) !f64 {
     const placements = try allocator.alloc(root.Placement, HEIGHT * 10 / 4);
     defer allocator.free(placements);
 
-    var rand = std.Random.DefaultPrng.init(seed);
-    var timer = try time.Timer.start();
+    var rand: std.Random.DefaultPrng = .init(seed);
+    var timer: time.Timer = try .start();
     for (0..RUN_COUNT) |i| {
         // Start at random position in bag
-        var bag = SevenBag.init(rand.next());
+        var bag: SevenBag = .init(rand.next());
         bag.random.random().shuffle(engine.pieces.PieceKind, &bag.pieces);
         bag.index = bag.random.random().uintLessThan(u8, bag.pieces.len);
-        const gamestate = GameState.init(bag, engine.kicks.srs);
+        const gamestate: GameState = .init(bag, engine.kicks.srs);
 
         // Optimize for 4 line PCs
         const solution = pc.findPc(

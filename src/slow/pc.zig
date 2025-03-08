@@ -57,13 +57,13 @@ pub fn findPc(
         }
     }
 
-    var cache = NodeSet.init(allocator);
+    var cache: NodeSet = .init(allocator);
     defer cache.deinit();
 
     // Pre-allocate a queue for each placement
     const queues = try allocator.alloc(movegen.MoveQueue, placements.len);
     for (0..queues.len) |i| {
-        queues[i] = movegen.MoveQueue.init(allocator, {});
+        queues[i] = .init(allocator, {});
     }
     defer allocator.free(queues);
     defer for (queues) |queue| {
@@ -125,7 +125,7 @@ fn findPcInner(
         return max_height == 0;
     }
 
-    const node = SearchNode{
+    const node: SearchNode = .{
         .rows = playfield.rows[0..23].*,
         .height = max_height,
         .held = pieces[0],
@@ -428,12 +428,12 @@ pub fn getFeatures(
 test "4-line PC" {
     const allocator = std.testing.allocator;
 
-    var gamestate = GameState(SevenBag).init(
+    var gamestate: GameState(SevenBag) = .init(
         SevenBag.init(0),
         &engine.kicks.srsPlus,
     );
 
-    const nn = try NN.load(allocator, "NNs/Fast3.json");
+    const nn: NN = try .load(allocator, "NNs/Fast3.json");
     defer nn.deinit(allocator);
 
     const placements = try allocator.alloc(Placement, 10);
@@ -465,51 +465,51 @@ test "4-line PC" {
 }
 
 test isPcPossible {
-    var playfield = BoardMask{};
+    var playfield: BoardMask = .{};
     playfield.rows[3] = (0b0111111110 << 1) | BoardMask.EMPTY_ROW;
     playfield.rows[2] = (0b0010000000 << 1) | BoardMask.EMPTY_ROW;
     playfield.rows[1] = (0b0000001000 << 1) | BoardMask.EMPTY_ROW;
     playfield.rows[0] = (0b0000001001 << 1) | BoardMask.EMPTY_ROW;
     try expect(isPcPossible(playfield.rows[0..4]));
 
-    playfield = BoardMask{};
+    playfield = .{};
     playfield.rows[3] = (0b0000000000 << 1) | BoardMask.EMPTY_ROW;
     playfield.rows[2] = (0b0010011000 << 1) | BoardMask.EMPTY_ROW;
     playfield.rows[1] = (0b0000011000 << 1) | BoardMask.EMPTY_ROW;
     playfield.rows[0] = (0b0000011001 << 1) | BoardMask.EMPTY_ROW;
     try expect(isPcPossible(playfield.rows[0..4]));
 
-    playfield = BoardMask{};
+    playfield = .{};
     playfield.rows[2] = (0b0010011100 << 1) | BoardMask.EMPTY_ROW;
     playfield.rows[1] = (0b0000011000 << 1) | BoardMask.EMPTY_ROW;
     playfield.rows[0] = (0b0000011011 << 1) | BoardMask.EMPTY_ROW;
     try expect(!isPcPossible(playfield.rows[0..3]));
 
-    playfield = BoardMask{};
+    playfield = .{};
     playfield.rows[2] = (0b0010010000 << 1) | BoardMask.EMPTY_ROW;
     playfield.rows[1] = (0b0000001000 << 1) | BoardMask.EMPTY_ROW;
     playfield.rows[0] = (0b0000001011 << 1) | BoardMask.EMPTY_ROW;
     try expect(isPcPossible(playfield.rows[0..3]));
 
-    playfield = BoardMask{};
+    playfield = .{};
     playfield.rows[2] = (0b0100011100 << 1) | BoardMask.EMPTY_ROW;
     playfield.rows[1] = (0b0010001000 << 1) | BoardMask.EMPTY_ROW;
     playfield.rows[0] = (0b0111111011 << 1) | BoardMask.EMPTY_ROW;
     try expect(!isPcPossible(playfield.rows[0..3]));
 
-    playfield = BoardMask{};
+    playfield = .{};
     playfield.rows[2] = (0b0100010000 << 1) | BoardMask.EMPTY_ROW;
     playfield.rows[1] = (0b0010011000 << 1) | BoardMask.EMPTY_ROW;
     playfield.rows[0] = (0b0100011011 << 1) | BoardMask.EMPTY_ROW;
     try expect(isPcPossible(playfield.rows[0..3]));
 
-    playfield = BoardMask{};
+    playfield = .{};
     playfield.rows[2] = (0b0100111000 << 1) | BoardMask.EMPTY_ROW;
     playfield.rows[1] = (0b0011011100 << 1) | BoardMask.EMPTY_ROW;
     playfield.rows[0] = (0b1100111000 << 1) | BoardMask.EMPTY_ROW;
     try expect(!isPcPossible(playfield.rows[0..3]));
 
-    playfield = BoardMask{};
+    playfield = .{};
     playfield.rows[2] = (0b0100111000 << 1) | BoardMask.EMPTY_ROW;
     playfield.rows[1] = (0b0011111100 << 1) | BoardMask.EMPTY_ROW;
     playfield.rows[0] = (0b0100111000 << 1) | BoardMask.EMPTY_ROW;
@@ -517,7 +517,7 @@ test isPcPossible {
 }
 
 test getFeatures {
-    var playfield = BoardMask{};
+    var playfield: BoardMask = .{};
     playfield.rows[5] = (0b0000000100 << 1) | BoardMask.EMPTY_ROW;
     playfield.rows[4] = (0b0000100000 << 1) | BoardMask.EMPTY_ROW;
     playfield.rows[3] = (0b0011010001 << 1) | BoardMask.EMPTY_ROW;
@@ -526,7 +526,7 @@ test getFeatures {
     playfield.rows[0] = (0b1111111111 << 1) | BoardMask.EMPTY_ROW;
     const features = getFeatures(
         playfield.rows[0..6],
-        [_]bool{true} ** NN.INPUT_COUNT,
+        @splat(true),
     );
     try expect(features.len == NN.INPUT_COUNT);
     try expect(features[0] == 11.7046995);

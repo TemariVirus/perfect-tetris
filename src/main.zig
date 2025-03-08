@@ -17,6 +17,12 @@ const NNInner = @import("zmai").genetic.neat.NN;
 const zig_args = @import("zig-args");
 const Error = zig_args.Error;
 
+const IS_DEBUG = switch (@import("builtin").mode) {
+    .Debug, .ReleaseSafe => true,
+    .ReleaseFast, .ReleaseSmall => false,
+};
+var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
+
 const Args = struct {
     help: bool = false,
 
@@ -57,9 +63,13 @@ const Verb = union(VerbType) {
 };
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
-    defer _ = gpa.deinit();
+    const allocator = if (IS_DEBUG)
+        debug_allocator.allocator()
+    else
+        std.heap.smp_allocator;
+    defer if (IS_DEBUG) {
+        _ = debug_allocator.deinit();
+    };
 
     const stdout = std.io.getStdOut().writer();
     const stderr = std.io.getStdErr().writer();
@@ -147,7 +157,7 @@ fn handleArgsError(err: Error) !void {
 pub fn enumValuesHelp(ArgsT: type, Enum: type) []const u8 {
     const max_option_len = blk: {
         var max_option_len = 0;
-        for (@typeInfo(ArgsT).Struct.fields) |field| {
+        for (@typeInfo(ArgsT).@"struct".fields) |field| {
             max_option_len = @max(max_option_len, field.name.len);
         }
         break :blk max_option_len;
@@ -155,14 +165,14 @@ pub fn enumValuesHelp(ArgsT: type, Enum: type) []const u8 {
 
     const total_len = blk: {
         var total_len = max_option_len + 13 + "Supported Values:\n".len;
-        for (@typeInfo(Enum).Enum.fields) |field| {
+        for (@typeInfo(Enum).@"enum".fields) |field| {
             total_len += max_option_len + 15 + field.name.len + 1;
         }
         break :blk total_len;
     };
 
     var buf: [total_len]u8 = undefined;
-    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    var fba: std.heap.FixedBufferAllocator = .init(&buf);
     const allocator = fba.allocator();
 
     var str = std.ArrayList(u8)
@@ -170,9 +180,9 @@ pub fn enumValuesHelp(ArgsT: type, Enum: type) []const u8 {
     const writer = str.writer();
 
     writer.writeAll("Supported Values: [") catch unreachable;
-    for (@typeInfo(Enum).Enum.fields, 0..) |field, i| {
+    for (@typeInfo(Enum).@"enum".fields, 0..) |field, i| {
         writer.writeAll(field.name) catch unreachable;
-        if (i < @typeInfo(Enum).Enum.fields.len - 1) {
+        if (i < @typeInfo(Enum).@"enum".fields.len - 1) {
             writer.writeByte(',') catch unreachable;
         }
     }
@@ -229,7 +239,7 @@ pub fn resolvePath(allocator: Allocator, path: []const u8) ![]const u8 {
 
 pub fn loadNN(allocator: Allocator, path: ?[]const u8) !?NN {
     if (path) |p| {
-        var arena = std.heap.ArenaAllocator.init(allocator);
+        var arena: std.heap.ArenaAllocator = .init(allocator);
         defer arena.deinit();
 
         const nn_path = try resolvePath(arena.allocator(), p);

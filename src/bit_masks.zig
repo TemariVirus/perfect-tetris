@@ -164,8 +164,8 @@ pub const PieceMask = struct {
         comptime attribute: fn (Piece) T,
     ) [28]T {
         var table: [28]T = undefined;
-        for (@typeInfo(PieceKind).Enum.fields) |p| {
-            for (@typeInfo(Facing).Enum.fields) |f| {
+        for (@typeInfo(PieceKind).@"enum".fields) |p| {
+            for (@typeInfo(Facing).@"enum".fields) |f| {
                 const piece = Piece{
                     .facing = @enumFromInt(f.value),
                     .kind = @enumFromInt(p.value),

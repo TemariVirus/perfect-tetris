@@ -110,13 +110,13 @@ pub fn orderMoves(
 }
 
 test allPlacements {
-    var playfield = BoardMask{};
+    var playfield: BoardMask = .{};
     playfield.rows[3] |= 0b0111111110_0;
     playfield.rows[2] |= 0b0010000000_0;
     playfield.rows[1] |= 0b0000001000_0;
     playfield.rows[0] |= 0b0000000001_0;
 
-    const PIECE = PieceKind.l;
+    const PIECE: PieceKind = .l;
     const placements = allPlacements(
         playfield,
         false,
@@ -134,12 +134,12 @@ test allPlacements {
 }
 
 test "No placements" {
-    var playfield = BoardMask{};
+    var playfield: BoardMask = .{};
     playfield.rows[2] |= 0b1111111110_0;
     playfield.rows[1] |= 0b1111111110_0;
     playfield.rows[0] |= 0b1111111100_0;
 
-    const PIECE = PieceKind.j;
+    const PIECE: PieceKind = .j;
     const placements = allPlacements(
         playfield,
         false,

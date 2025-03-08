@@ -30,7 +30,7 @@ const PiecePosition = packed struct {
     facing: Facing,
 
     pub fn pack(piece: Piece, pos: Position) PiecePosition {
-        return PiecePosition{
+        return .{
             .y = pos.y,
             .x = @intCast(pos.x),
             .facing = piece.facing,
@@ -157,7 +157,7 @@ pub fn Intermediate(comptime TPiecePosSet: type) type {
         pub fn onGround(self: Self) bool {
             return self.collides(
                 self.current,
-                Position{ .x = self.pos.x, .y = self.pos.y - 1 },
+                .{ .x = self.pos.x, .y = self.pos.y - 1 },
             );
         }
     };
@@ -235,8 +235,8 @@ pub fn allPlacementsRaw(
     piece_kind: PieceKind,
     max_height: u7,
 ) TPiecePosSet {
-    var seen = TPiecePosSet.init();
-    var placements = TPiecePosSet.init();
+    var seen: TPiecePosSet = .init();
+    var placements: TPiecePosSet = .init();
     var stack = TPlacementStack.init(0) catch unreachable;
     const collision_set = collisionSet(
         TPiecePosSet,
@@ -252,7 +252,7 @@ pub fn allPlacementsRaw(
         if (!do_o_rotations and piece_kind == .o and facing != .up) {
             continue;
         }
-        const piece = Piece{
+        const piece: Piece = .{
             .facing = facing,
             .kind = piece_kind,
         };
@@ -276,7 +276,7 @@ pub fn allPlacementsRaw(
         };
 
         for (Move.moves) |move| {
-            var new_game = Intermediate(TPiecePosSet){
+            var new_game: Intermediate(TPiecePosSet) = .{
                 .collision_set = &collision_set,
                 .current = piece,
                 .pos = pos,
@@ -340,7 +340,7 @@ pub fn orderMoves(
     var iter = moves.iterator(piece);
     while (iter.next()) |placement| {
         var board = playfield;
-        board.place(PieceMask.from(placement.piece), placement.pos);
+        board.place(.from(placement.piece), placement.pos);
         const cleared = board.clearLines(placement.pos.y);
         const new_height = max_height - cleared;
         if (!validFn(board, new_height)) {
@@ -355,13 +355,13 @@ pub fn orderMoves(
 }
 
 test allPlacements {
-    var playfield = BoardMask{};
+    var playfield: BoardMask = .{};
     playfield.mask |= @as(u64, 0b0111111110) << 30;
     playfield.mask |= @as(u64, 0b0010000000) << 20;
     playfield.mask |= @as(u64, 0b0000001000) << 10;
     playfield.mask |= @as(u64, 0b0000000001);
 
-    const PIECE = PieceKind.l;
+    const PIECE: PieceKind = .l;
     const placements = allPlacements(
         playfield,
         false,
@@ -379,12 +379,12 @@ test allPlacements {
 }
 
 test "No placements" {
-    var playfield = BoardMask{};
+    var playfield: BoardMask = .{};
     playfield.mask |= @as(u64, 0b1111111110) << 20;
     playfield.mask |= @as(u64, 0b1111111110) << 10;
     playfield.mask |= @as(u64, 0b1111111100);
 
-    const PIECE = PieceKind.j;
+    const PIECE: PieceKind = .j;
     const placements = allPlacements(
         playfield,
         false,
@@ -402,13 +402,13 @@ test "No placements" {
 }
 
 test "No placements 2" {
-    var playfield = BoardMask{};
+    var playfield: BoardMask = .{};
     playfield.mask |= @as(u64, 0b1111111110) << 30;
     playfield.mask |= @as(u64, 0b1111111100) << 20;
     playfield.mask |= @as(u64, 0b1111111000) << 10;
     playfield.mask |= @as(u64, 0b1111111100);
 
-    const PIECE = PieceKind.j;
+    const PIECE: PieceKind = .j;
     const placements = allPlacements(
         playfield,
         false,
@@ -426,12 +426,12 @@ test "No placements 2" {
 }
 
 test "No placements 3" {
-    var playfield = BoardMask{};
+    var playfield: BoardMask = .{};
     playfield.mask |= @as(u64, 0b1111111110) << 20;
     playfield.mask |= @as(u64, 0b1111111100) << 10;
     playfield.mask |= @as(u64, 0b1111111101);
 
-    const PIECE = PieceKind.z;
+    const PIECE: PieceKind = .z;
     const placements = allPlacements(
         playfield,
         false,

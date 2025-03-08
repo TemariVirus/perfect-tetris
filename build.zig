@@ -24,7 +24,7 @@ pub fn build(b: *Build) void {
     }).module("zmai");
 
     // zig-args dependency
-    const args_module = b.dependency("zig-args", .{
+    const args_module = b.dependency("args", .{
         .target = target,
         .optimize = optimize,
     }).module("args");
@@ -124,7 +124,7 @@ fn buildExe(
     );
 
     if (b.option(bool, "strip", "Strip executable binary") orelse false) {
-        stripModuleRecursive(&exe.root_module);
+        stripModuleRecursive(exe.root_module);
     }
 
     b.installArtifact(exe);

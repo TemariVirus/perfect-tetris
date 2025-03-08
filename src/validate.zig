@@ -50,7 +50,7 @@ pub fn main(args: ValidateArgs, path: []const u8) !void {
             return;
         }
 
-        var state = GameState.init(Bag.init(0), engine.kicks.none);
+        var state: GameState = .init(Bag.init(0), engine.kicks.none);
         for (0..solution.placements.len) |i| {
             state.current = solution.placements.buffer[i].piece;
             state.pos = solution.placements.buffer[i].pos;

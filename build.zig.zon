@@ -1,22 +1,24 @@
 .{
-    .name = "perfect-tetris",
-    .version = "1.1.2",
+    .name = .perfect_tetris,
+    .version = "1.2.0",
+    .fingerprint = 0xf8c558c903285569,
+    .minimum_zig_version = "0.14.0",
     .dependencies = .{
+        .args = .{
+            .url = "git+https://github.com/ikskuh/zig-args#9425b94c103a031777fdd272c555ce93a7dea581",
+            .hash = "args-0.0.0-CiLiqv_NAAC97fGpk9hS2K681jkiqPsWP6w3ucb_ctGH",
+        },
         .engine = .{
-            .url = "git+https://github.com/TemariVirus/Budget-Tetris-Engine#0f786567ea92f3275f6e68bea10be72487ad0bc3",
-            .hash = "1220cfca64e5c4c740db01039a1743e4cd6f4e09ac1a029367fb73dfb4c88fc54e52",
+            .url = "git+https://github.com/TemariVirus/Budget-Tetris-Engine#56d1faf96ec6f2549344041413f1ed5b9c1ecf5c",
+            .hash = "budget_tetris-0.0.0-dNv9yuG7AQCXKe6fErJtgrMuLvKY2v_22oNI0KDP_D0l",
         },
         .vaxis = .{
-            .url = "git+https://github.com/rockorager/libvaxis#v0.5.1",
-            .hash = "1220de23a3240e503397ea579de4fd85db422f537e10036ef74717c50164475813ce",
+            .url = "git+https://github.com/rockorager/libvaxis#5b48d2c40c994363f87765fe9737d57c263275a4",
+            .hash = "vaxis-0.1.0-BWNV_BzyCADK2dn8dd4IAD2HjdgAFw34iRiNMX00-14g",
         },
         .zmai = .{
-            .url = "git+https://github.com/TemariVirus/zmai#fa4f6af39bb185555221346a6d3395cfb31258be",
-            .hash = "12205906277f0eaff4417d1cf18062e8e30331868f100a93684f1ef5708fd11d6c4b",
-        },
-        .@"zig-args" = .{
-            .url = "git+https://github.com/ikskuh/zig-args#03af1b6c5bfda9646a562c861055024daed5b238",
-            .hash = "1220904d2fdcd970dd0d216211d092eb3ef6da01117163cc9393ab845a1d66c029d9",
+            .url = "git+https://github.com/TemariVirus/zmai#aa222ba1c66d9d2ff6b398bf7a653fffc7014191",
+            .hash = "zmai-0.0.0-AliNpPSTAQCMJLkisfz8H_19syShtpZI6pAc3WMoCngH",
         },
     },
     .paths = .{

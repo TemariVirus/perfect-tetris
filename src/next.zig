@@ -8,7 +8,7 @@ const expect = std.testing.expect;
 const PieceKind = @import("engine").pieces.PieceKind;
 
 const MAX_BAG_LEN = 7;
-const BagLenInt = std.math.Log2IntCeil(@Type(.{ .Int = .{
+const BagLenInt = std.math.Log2IntCeil(@Type(.{ .int = .{
     .bits = MAX_BAG_LEN,
     .signedness = .unsigned,
 } }));
@@ -90,10 +90,10 @@ pub fn NextIterator(comptime len: usize, comptime lock_len: usize) type {
             pub fn init(size: BagLenInt, locks: []const u3) @This() {
                 assert(size > 0 and size <= MAX_BAG_LEN);
 
-                var frees = [_]u7{undefined} ** MAX_BAG_LEN;
+                var frees: [MAX_BAG_LEN]u7 = undefined;
                 // First position may be any piece
                 frees[0] = std.math.maxInt(u7);
-                var iters = [_]u7{undefined} ** MAX_BAG_LEN;
+                var iters: [MAX_BAG_LEN]u7 = undefined;
                 iters[0] = if (0 < locks.len) lockedIter(locks[0]) else frees[0];
                 for (1..size) |i| {
                     const selected_piece = lsb(iters[i - 1]);
@@ -142,7 +142,7 @@ pub fn NextIterator(comptime len: usize, comptime lock_len: usize) type {
                 p = p.shiftLeft(offset);
                 const lower = pieces.items &
                     ~(NextArray.mask << @intCast(offset * 3));
-                p = NextArray.init(p.items | lower);
+                p = .init(p.items | lower);
 
                 // Advance iters
                 var i = size - 1;
@@ -180,15 +180,15 @@ pub fn NextIterator(comptime len: usize, comptime lock_len: usize) type {
         /// values of `locks`.
         pub fn init(locks: [lock_len]u3) @This() {
             var size_left = len;
-            var sizes = [_]BagLenInt{undefined} ** n_bags;
+            var sizes: [n_bags]BagLenInt = undefined;
             for (0..n_bags) |i| {
                 sizes[i] = @min(size_left, MAX_BAG_LEN);
                 size_left -= sizes[i];
             }
 
-            var bags = [_]BagIterator{undefined} ** n_bags;
+            var bags: [n_bags]BagIterator = undefined;
             var start: usize = len;
-            var pieces = NextArray.init(0);
+            var pieces: NextArray = .init(0);
 
             // Distribute locks to bags, advancing bag sizes as needed if bags
             // are unable to satisfy the locks
@@ -231,7 +231,7 @@ pub fn NextIterator(comptime len: usize, comptime lock_len: usize) type {
             size: BagLenInt,
             locks: [lock_len]u3,
         ) BagIterator {
-            return BagIterator.init(
+            return .init(
                 size,
                 locks[@min(locks.len, start)..@min(locks.len, start + size)],
             );
@@ -325,7 +325,7 @@ pub fn DigitsIterator(comptime len: usize) type {
                 return null;
             }
 
-            var digits = [_]u3{undefined} ** len;
+            var digits: [len]u3 = undefined;
             var value = self.value;
             for (0..len) |i| {
                 digits[i] = @intCast(value % base);
@@ -362,16 +362,16 @@ pub fn SequenceIterator(comptime len: usize, comptime unlocked: usize) type {
 
         pub fn init(allocator: Allocator) @This() {
             var self = @This(){
-                .current = PieceArray(len).init(0),
+                .current = .init(0),
                 // By letting the first piece kind be a "wildcard", we only
                 // need to take every 7th sequence, reducing the size of `seen`
                 // by a factor of 7.
-                .lock_iter = LockIter.init(0, 7),
+                .lock_iter = .init(0, 7),
                 .next_iter = undefined,
-                .seen = SequenceSet.init(allocator),
+                .seen = .init(allocator),
             };
             self.current = self.current.set(len - 1, 6);
-            self.next_iter = NextIter.init(self.lock_iter.next().?);
+            self.next_iter = .init(self.lock_iter.next().?);
             return self;
         }
 
@@ -402,7 +402,7 @@ pub fn SequenceIterator(comptime len: usize, comptime unlocked: usize) type {
                 // If we have exhausted all holds, advance the next iterator
                 if (self.current.get(len - 1) == 7) {
                     if (self.advanceNext()) |pieces| {
-                        self.current = PieceArray(len).init(pieces.items);
+                        self.current = .init(pieces.items);
                         // No need to set the hold as it is already 0
                         // self.current = self.current.set(len - 1, 0);
                     } else {
@@ -435,7 +435,7 @@ pub fn SequenceIterator(comptime len: usize, comptime unlocked: usize) type {
                 // and clear the seen set
                 if (self.lock_iter.next()) |locks| {
                     self.seen.clearRetainingCapacity();
-                    self.next_iter = NextIter.init(locks);
+                    self.next_iter = .init(locks);
                 } else {
                     self.seen.clearAndFree();
                     return null;
@@ -461,7 +461,7 @@ pub fn SequenceIterator(comptime len: usize, comptime unlocked: usize) type {
         /// Unpacks the array into a sequence of pieces, swapping the wildcard
         /// with the given piece.
         inline fn unpack(arr: PieceArray(len), swap: u3) [len]PieceKind {
-            var pieces = [_]PieceKind{undefined} ** len;
+            var pieces: [len]PieceKind = undefined;
             for (0..len) |i| {
                 // Reverse order
                 const rev_i = len - i - 1;
@@ -511,7 +511,7 @@ test SequenceIterator {
     };
 
     inline for (3..COUNTS.len) |i| {
-        var iter = SequenceIterator(i, @min(6, i - 1))
+        var iter: SequenceIterator(i, @min(6, i - 1)) =
             .init(std.testing.allocator);
         defer iter.deinit();
 

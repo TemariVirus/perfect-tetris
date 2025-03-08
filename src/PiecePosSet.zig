@@ -36,7 +36,7 @@ pub fn PiecePosSet(shape: [3]usize) type {
         /// Initialises an empty set.
         pub fn init() Self {
             return Self{
-                .data = BackingSet.initEmpty(),
+                .data = .initEmpty(),
             };
         }
 

@@ -32,7 +32,7 @@ pub const std_options: std.Options = .{
 };
 
 const INDEX_INTERVAL = 1 << 17;
-const BORDER_GLYPHS = BorderOptions.Glyphs{
+const BORDER_GLYPHS: BorderOptions.Glyphs = .{
     .custom = .{ "╔", "═", "╗", "║", "╝", "╚" },
 };
 
@@ -73,7 +73,7 @@ pub fn main(allocator: Allocator, args: DisplayArgs, path: []const u8) !void {
     const reader = pc_file.reader().any();
 
     // Set up terminal and vaxis
-    var tty = try Tty.init();
+    var tty: Tty = try .init();
     defer tty.deinit();
     var bf = tty.bufferedWriter();
     const stdout = bf.writer().any();
@@ -93,7 +93,7 @@ pub fn main(allocator: Allocator, args: DisplayArgs, path: []const u8) !void {
 
     // Start indexing thread
     const SOLUTION_MIN_SIZE = 8;
-    var solution_index = try SolutionIndex.initCapacity(
+    var solution_index: SolutionIndex = try .initCapacity(
         allocator,
         (try pc_file.getEndPos()) / SOLUTION_MIN_SIZE / INDEX_INTERVAL + 1,
     );
@@ -101,7 +101,7 @@ pub fn main(allocator: Allocator, args: DisplayArgs, path: []const u8) !void {
 
     solution_index.appendAssumeCapacity(0);
     var stop_index_thread = false;
-    const index_thread = try std.Thread.spawn(
+    const index_thread: std.Thread = try .spawn(
         .{ .allocator = allocator },
         indexThread,
         .{ &stop_index_thread, path, &solution_index, &loop },
@@ -110,7 +110,7 @@ pub fn main(allocator: Allocator, args: DisplayArgs, path: []const u8) !void {
     index_thread.detach();
 
     // Widgets
-    var text_input = TextInput.init(allocator, &vx.unicode);
+    var text_input: TextInput = .init(allocator, &vx.unicode);
     defer text_input.deinit();
 
     // Run main loop
@@ -159,25 +159,25 @@ pub fn main(allocator: Allocator, args: DisplayArgs, path: []const u8) !void {
         const matrix_width = 22;
         const matrix_height = 22;
         const footer_height = 1;
-        const next_len: usize = sol.next.len;
+        const next_len: u5 = @intCast(sol.next.len);
         const next_width = 10;
-        const next_height = next_len * 3 + 2;
+        const next_height = @as(u16, next_len) * 3 + 2;
 
-        const main_width = matrix_width + 1 + next_width;
-        const main_height = @max(matrix_height, next_height) + footer_height;
+        const main_width: u16 = matrix_width + 1 + next_width;
+        const main_height: u16 = @max(matrix_height, next_height) + footer_height;
         const main_win = win.child(.{
             .x_off = (win.width -| main_width) / 2,
             .y_off = (win.height -| main_height) / 2,
-            .width = .{ .limit = main_width },
-            .height = .{ .limit = main_height },
+            .width = main_width,
+            .height = main_height,
             .border = .{},
         });
 
         const next_win = main_win.child(.{
             .x_off = matrix_width + 1,
             .y_off = 0,
-            .width = .{ .limit = next_width },
-            .height = .{ .limit = next_height },
+            .width = next_width,
+            .height = next_height,
             .border = .{
                 .where = .{ .other = .{
                     .left = true,
@@ -193,8 +193,8 @@ pub fn main(allocator: Allocator, args: DisplayArgs, path: []const u8) !void {
         const matrix_win = main_win.child(.{
             .x_off = 0,
             .y_off = next_height -| matrix_height,
-            .width = .{ .limit = matrix_width },
-            .height = .{ .limit = matrix_height },
+            .width = matrix_width,
+            .height = matrix_height,
             .border = .{
                 .where = .{
                     .other = .{
@@ -212,8 +212,8 @@ pub fn main(allocator: Allocator, args: DisplayArgs, path: []const u8) !void {
         const footer_win = main_win.child(.{
             .x_off = 0,
             .y_off = main_height - 2,
-            .width = .expand,
-            .height = .{ .limit = 2 },
+            .width = main_width,
+            .height = 2,
         });
 
         var buf: [53]u8 = undefined;
@@ -222,11 +222,11 @@ pub fn main(allocator: Allocator, args: DisplayArgs, path: []const u8) !void {
             "Solution {} of {}",
             .{ pos + 1, solution_count },
         ) catch unreachable;
-        _ = try footer_win.printSegment(
+        _ = footer_win.printSegment(
             .{ .text = text },
             .{ .row_offset = 0, .wrap = .none },
         );
-        _ = try footer_win.printSegment(
+        _ = footer_win.printSegment(
             .{ .text = "Skip to: " },
             .{ .row_offset = 1 },
         );
@@ -234,8 +234,8 @@ pub fn main(allocator: Allocator, args: DisplayArgs, path: []const u8) !void {
         text_input.draw(footer_win.child(.{
             .x_off = 9,
             .y_off = 1,
-            .width = .expand,
-            .height = .{ .limit = 1 },
+            .width = footer_win.width - 9,
+            .height = 1,
         }));
 
         try vx.render(stdout);
@@ -341,7 +341,7 @@ fn drawPiece(win: Window, piece: Piece, x: i8, y: i8) void {
         const mino_x = x + mino.x;
         // The y coordinate is flipped when converting to nterm coordinates.
         const mino_y = y + (3 - mino.y);
-        _ = try win.printSegment(.{
+        _ = win.printSegment(.{
             .text = "  ",
             .style = .{
                 .fg = .{ .index = color },
@@ -356,7 +356,7 @@ fn drawPiece(win: Window, piece: Piece, x: i8, y: i8) void {
 
 fn drawSequence(win: Window, pieces: []const PieceKind) void {
     for (pieces, 0..) |p, i| {
-        const piece = Piece{ .facing = .up, .kind = p };
+        const piece: Piece = .{ .facing = .up, .kind = p };
         drawPiece(win, piece, 0, @intCast(i * 3));
     }
 }
@@ -388,7 +388,7 @@ fn drawMatrixPiece(
         const mino_x = pos.x + mino.x;
         // The y coordinate is flipped when converting to nterm coordinates.
         const mino_y = 19 - pos.y - mino.y - cleared;
-        _ = try win.printSegment(.{
+        _ = win.printSegment(.{
             .text = "  ",
             .style = .{
                 .fg = .{ .index = color },
@@ -404,7 +404,7 @@ fn drawMatrixPiece(
 }
 
 fn drawMatrix(win: Window, placements: []const Placement) void {
-    var row_occupancy = [_]u8{0} ** 20;
+    var row_occupancy: [20]u8 = @splat(0);
     for (placements) |p| {
         drawMatrixPiece(win, &row_occupancy, p.piece, p.pos);
     }

@@ -20,6 +20,12 @@ const pc = root.pc;
 const PCSolution = root.PCSolution;
 const Placement = root.Placement;
 
+const IS_DEBUG = switch (@import("builtin").mode) {
+    .Debug, .ReleaseSafe => true,
+    .ReleaseFast, .ReleaseSmall => false,
+};
+var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
+
 // Height of perfect clears to find
 const HEIGHT = 4;
 comptime {
@@ -33,7 +39,7 @@ const SAVE_PATH = std.fmt.comptimePrint("pc-data/{}", .{HEIGHT});
 
 // Count of threads saving to disk to make sure all threads finish saving
 // before exiting.
-var saving_threads = std.atomic.Value(i32).init(0);
+var saving_threads: std.atomic.Value(i32) = .init(0);
 
 /// Thread-safe ring buffer for distributing work, and storing and writing
 /// solutions to disk.
@@ -52,8 +58,8 @@ const SolutionBuffer = struct {
     iter: Iterator,
 
     write_idx: u32 = 0,
-    read_idx: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
-    lengths: [CHUNKS]AtomicLength = [_]AtomicLength{AtomicLength.init(-1)} ** CHUNKS,
+    read_idx: std.atomic.Value(u32) = .init(0),
+    lengths: [CHUNKS]AtomicLength = @splat(.init(-1)),
     sequences: [CHUNKS][CHUNK_SIZE]u48,
     solutions: [CHUNKS][CHUNK_SIZE][NEXT_LEN]Placement,
 
@@ -61,7 +67,7 @@ const SolutionBuffer = struct {
     pub fn init(allocator: Allocator) !SolutionBuffer {
         return .{
             .timer = try Timer.start(),
-            .iter = Iterator.init(allocator),
+            .iter = .init(allocator),
             .sequences = undefined,
             .solutions = undefined,
         };
@@ -108,7 +114,7 @@ const SolutionBuffer = struct {
         defer file.close();
 
         const max_len = comptime std.math.log10_int(@as(u64, std.math.maxInt(u64))) + 1;
-        var buf = [_]u8{undefined} ** max_len;
+        var buf: [max_len]u8 = undefined;
         const buf_len = try file.readAll(&buf);
 
         self.count = try std.fmt.parseInt(u64, buf[0..buf_len], 10);
@@ -161,7 +167,7 @@ const SolutionBuffer = struct {
 
         var len: usize = 0;
         while (try self.iter.next()) |pieces| {
-            var next = PCSolution.NextArray{ .len = pieces.len };
+            var next: PCSolution.NextArray = .{ .len = pieces.len };
             @memcpy(next.slice(), &pieces);
             self.sequences[index][len] = PCSolution.packNext(next);
             len += 1;
@@ -285,7 +291,7 @@ const SolutionBuffer = struct {
             self.solutions[mask(self.read_idx.raw)][0..len],
         ) |seq, sol| {
             var holds: u16 = 0;
-            var placements = [_]u8{0} ** NEXT_LEN;
+            var placements: [NEXT_LEN]u8 = @splat(0);
 
             const sequence = PCSolution.unpackNext(seq);
 
@@ -380,16 +386,20 @@ const SolutionBuffer = struct {
 pub fn main() !void {
     setupExitHandler();
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
-    defer _ = gpa.deinit();
+    const allocator = if (IS_DEBUG)
+        debug_allocator.allocator()
+    else
+        std.heap.smp_allocator;
+    defer if (IS_DEBUG) {
+        _ = debug_allocator.deinit();
+    };
 
-    var buf = try SolutionBuffer.loadOrInit(allocator, SAVE_PATH);
+    var buf: SolutionBuffer = try .loadOrInit(allocator, SAVE_PATH);
     defer buf.deinit();
 
-    var threads = [_]Thread{undefined} ** THREADS;
+    var threads: [THREADS]Thread = undefined;
     for (0..threads.len) |i| {
-        threads[i] = try Thread.spawn(
+        threads[i] = try .spawn(
             .{ .allocator = allocator },
             solveThread,
             .{&buf},
@@ -424,7 +434,7 @@ fn setupExitHandler() void {
             _ = signal(sig, handleExitWindows);
         }
     } else {
-        const action = os.linux.Sigaction{
+        const action: os.linux.Sigaction = .{
             .handler = .{ .handler = handleExit },
             .mask = os.linux.empty_sigset,
             .flags = 0,
@@ -451,9 +461,10 @@ fn handleExitWindows(sig: c_int, _: c_int) callconv(.C) void {
 }
 
 fn solveThread(buf: *SolutionBuffer) !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
-    defer _ = gpa.deinit();
+    const allocator = if (IS_DEBUG)
+        debug_allocator.allocator()
+    else
+        std.heap.smp_allocator;
 
     const nn = try root.defaultNN(allocator);
     defer nn.deinit(allocator);
@@ -489,7 +500,7 @@ fn solveThread(buf: *SolutionBuffer) !void {
 fn gameWithPieces(pieces: PCSolution.NextArray) GameState {
     assert(pieces.len >= 2);
 
-    var game = GameState.init(SevenBag.init(0), engine.kicks.srs);
+    var game: GameState = .init(.init(0), engine.kicks.srs);
     game.hold_kind = pieces.buffer[0];
     game.current.kind = pieces.buffer[1];
 

@@ -49,7 +49,7 @@ pub const NN = struct {
 
     pub fn load(allocator: Allocator, path: []const u8) !NN {
         var inputs_used: [INPUT_COUNT]bool = undefined;
-        const nn = try NNInner.load(allocator, path, &inputs_used);
+        const nn: NNInner = try .load(allocator, path, &inputs_used);
         return .{
             .net = nn,
             .inputs_used = inputs_used,
@@ -100,8 +100,8 @@ pub const PCSolution = struct {
     pub const NextArray = std.BoundedArray(PieceKind, MAX_SEQ_LEN);
     pub const PlacementArray = std.BoundedArray(Placement, MAX_SEQ_LEN - 1);
 
-    next: NextArray = NextArray{},
-    placements: PlacementArray = PlacementArray{},
+    next: NextArray = .{},
+    placements: PlacementArray = .{},
 
     /// Reads the next perfect clear solution from the reader, assuming the
     /// reader is reading a `.pc` file. If the reader is at the end of the
@@ -115,7 +115,7 @@ pub const PCSolution = struct {
         };
         const holds = try reader.readInt(u16, .little);
 
-        var solution = PCSolution{};
+        var solution: PCSolution = .{};
         solution.next = unpackNext(seq);
         if (solution.next.len == 0) {
             return solution;
@@ -133,7 +133,7 @@ pub const PCSolution = struct {
 
             const placement = try reader.readByte();
             const facing: Facing = @enumFromInt(@as(u2, @truncate(placement)));
-            const piece = Piece{ .facing = facing, .kind = current };
+            const piece: Piece = .{ .facing = facing, .kind = current };
             const canon_pos = placement >> 2;
             const pos = piece.fromCanonicalPosition(.{
                 .x = @intCast(canon_pos % 10),
@@ -157,16 +157,16 @@ pub const PCSolution = struct {
             seq |= p << @intCast(3 * i);
         }
         // Fill remaining bits with 1s
-        const shift = 3 * @as(u6, pieces.len);
+        const shift = 3 * @as(u6, @intCast(pieces.len));
         seq |= @truncate(~@as(u64, 0) << shift);
         return seq;
     }
 
     /// Unpacks a u48 into a next sequence.
     pub fn unpackNext(seq: u48) NextArray {
-        var pieces = NextArray{};
+        var pieces: NextArray = .{};
         while (pieces.len < MAX_SEQ_LEN) {
-            const shift = 3 * @as(u6, pieces.len);
+            const shift = 3 * @as(u6, @intCast(pieces.len));
             const p: u3 = @truncate(seq >> @intCast(shift));
             // 0b111 is the sentinel value for the end of the sequence
             if (p == 0b111) {
@@ -270,8 +270,7 @@ pub fn findPcAuto(
             placements,
             save_hold,
         )) |solution| {
-            assert(allocator.resize(placements, solution.len));
-            return solution;
+            return try shrinkMemory(Placement, allocator, placements, solution.len);
         } else |e| if (e != FindPcError.SolutionTooLong) {
             return e;
         }
@@ -286,8 +285,7 @@ pub fn findPcAuto(
         placements,
         save_hold,
     );
-    assert(allocator.resize(placements, solution.len));
-    return solution;
+    return try shrinkMemory(Placement, allocator, placements, solution.len);
 }
 
 pub fn loadNNFromStr(allocator: Allocator, json_str: []const u8) NN {
@@ -306,6 +304,22 @@ pub fn loadNNFromStr(allocator: Allocator, json_str: []const u8) NN {
         .net = _nn,
         .inputs_used = inputs_used,
     };
+}
+
+fn shrinkMemory(
+    comptime T: type,
+    allocator: Allocator,
+    mem: []T,
+    new_len: usize,
+) Allocator.Error![]T {
+    assert(new_len <= mem.len);
+    if (allocator.remap(mem, new_len)) |new_mem| {
+        return new_mem;
+    }
+    const new_mem = try allocator.alloc(Placement, new_len);
+    @memcpy(new_mem, mem[0..new_len]);
+    allocator.free(mem);
+    return new_mem;
 }
 
 test {

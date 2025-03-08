@@ -14,19 +14,19 @@ pub fn main() !void {
     // Benchmark command:
     // zig build bench -Dcpu=baseline
 
-    // Mean: 11.911ms ± 29.119ms
-    // Max: 261.209ms
+    // Mean: 11.864ms ± 29.254ms
+    // Max: 257.017ms
     try pcBenchmark(4, "NNs/Fast3.json", false);
 
-    // Mean: 17.716ms ± 42.267ms
-    // Max: 376.861ms
+    // Mean: 15.939ms ± 38.706ms
+    // Max: 338.054ms
     try pcBenchmark(4, "NNs/Fast3.json", true);
 
-    // Mean: 10.244ms ± 23.12ms
-    // Max: 236.706ms
+    // Mean: 10.035ms ± 22.749ms
+    // Max: 233.465ms
     try pcBenchmark(6, "NNs/Fast3.json", false);
 
-    // Mean: 62ns
+    // Mean: 60ns
     getFeaturesBenchmark();
 }
 
@@ -75,9 +75,8 @@ pub fn pcBenchmark(
         \\
     , .{ height, std.fs.path.stem(nn_path), slow });
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
-    defer _ = gpa.deinit();
+    // For some reason std.heap.smp_allocator takes forever when height = 6
+    const allocator = std.heap.page_allocator;
 
     const nn = try NN.load(allocator, nn_path);
     defer nn.deinit(allocator);
@@ -143,9 +142,9 @@ pub fn getFeaturesBenchmark() void {
     , .{});
 
     // Randomly place 3 pieces
-    var xor = std.Random.Xoroshiro128.init(0);
+    var xor: std.Random.Xoroshiro128 = .init(0);
     const rand = xor.random();
-    var game = GameState.init(SevenBag.init(xor.next()), &engine.kicks.srsPlus);
+    var game: GameState = .init(SevenBag.init(xor.next()), &engine.kicks.srsPlus);
     for (0..3) |_| {
         game.current.facing = rand.enumValue(engine.pieces.Facing);
         game.pos.x = rand.intRangeAtMost(
@@ -156,12 +155,12 @@ pub fn getFeaturesBenchmark() void {
         _ = game.dropToGround();
         _ = game.lockCurrent(-1);
     }
-    const playfield = root.bit_masks.BoardMask.from(game.playfield);
+    const playfield: root.bit_masks.BoardMask = .from(game.playfield);
 
     const start = time.nanoTimestamp();
     for (0..RUN_COUNT) |_| {
         std.mem.doNotOptimizeAway(
-            pc.getFeatures(playfield, 6, [_]bool{true} ** NN.INPUT_COUNT),
+            pc.getFeatures(playfield, 6, @splat(true)),
         );
     }
     const time_taken: u64 = @intCast(time.nanoTimestamp() - start);

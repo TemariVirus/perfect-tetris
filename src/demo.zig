@@ -59,7 +59,7 @@ pub fn main(allocator: Allocator, args: DemoArgs, nn: ?NN) !void {
     );
     defer nterm.deinit();
 
-    const settings = engine.GameSettings{
+    const settings: engine.GameSettings = .{
         .g = 0,
         .display_stats = .{
             .pps,
@@ -68,7 +68,7 @@ pub fn main(allocator: Allocator, args: DemoArgs, nn: ?NN) !void {
         },
         .target_mode = .none,
     };
-    var player = Player.init(
+    var player: Player = .init(
         "PC Solver",
         SevenBag.init(0),
         kicks.srsPlus,
@@ -83,16 +83,16 @@ pub fn main(allocator: Allocator, args: DemoArgs, nn: ?NN) !void {
     );
 
     var placement_i: usize = 0;
-    var pc_queue = try SolutionList.initCapacity(allocator, MAX_PC_QUEUE);
+    var pc_queue: SolutionList = try .initCapacity(allocator, MAX_PC_QUEUE);
     defer pc_queue.deinit();
 
-    const pc_thread = try std.Thread.spawn(.{
+    const pc_thread: std.Thread = try .spawn(.{
         .allocator = allocator,
     }, pcThread, .{ allocator, nn, player.state, &pc_queue });
     pc_thread.detach();
 
-    var render_timer = PeriodicTrigger.init(time.ns_per_s / FRAMERATE, true);
-    var place_timer = PeriodicTrigger.init(time.ns_per_s / args.pps, false);
+    var render_timer: PeriodicTrigger = .init(time.ns_per_s / FRAMERATE, true);
+    var place_timer: PeriodicTrigger = .init(time.ns_per_s / args.pps, false);
     while (true) {
         var triggered = false;
 

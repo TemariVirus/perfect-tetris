@@ -35,7 +35,7 @@ pub fn findPc(
     placements: []Placement,
     save_hold: ?PieceKind,
 ) ![]Placement {
-    const playfield = BoardMask.from(game.playfield);
+    const playfield: BoardMask = .from(game.playfield);
     const pc_info = root.minPcInfo(game.playfield) orelse
         return FindPcError.NoPcExists;
     var pieces_needed = pc_info.pieces_needed;
@@ -55,13 +55,13 @@ pub fn findPc(
         }
     }
 
-    var cache = NodeSet.init(allocator);
+    var cache: NodeSet = .init(allocator);
     defer cache.deinit();
 
     // Pre-allocate a queue for each placement
     const queues = try allocator.alloc(movegen.MoveQueue, placements.len);
     for (0..queues.len) |i| {
-        queues[i] = movegen.MoveQueue.init(allocator, {});
+        queues[i] = .init(allocator, {});
     }
     defer allocator.free(queues);
     defer for (queues) |queue| {
@@ -179,7 +179,7 @@ fn findPcInner(
         return max_height == 0;
     }
 
-    const node = SearchNode{
+    const node: SearchNode = .{
         .playfield = @truncate(playfield.mask),
         .held = pieces[0],
     };
@@ -252,7 +252,7 @@ fn findPcInner(
         assert(pieces[0] == placement.piece.kind);
 
         var board = playfield;
-        board.place(PieceMask.from(placement.piece), placement.pos);
+        board.place(.from(placement.piece), placement.pos);
         const cleared = board.clearLines(placement.pos.y);
 
         const new_height = max_height - cleared;
@@ -455,12 +455,12 @@ fn orderScore(playfield: BoardMask, max_height: u3, nn: NN) f32 {
 test "4-line PC" {
     const allocator = std.testing.allocator;
 
-    var gamestate = GameState(SevenBag).init(
+    var gamestate: GameState(SevenBag) = .init(
         SevenBag.init(0),
         &engine.kicks.srsPlus,
     );
 
-    const nn = try NN.load(allocator, "NNs/Fast3.json");
+    const nn: NN = try .load(allocator, "NNs/Fast3.json");
     defer nn.deinit(allocator);
 
     const placements = try allocator.alloc(Placement, 10);
@@ -494,12 +494,12 @@ test "4-line PC" {
 test "6-line PC" {
     const allocator = std.testing.allocator;
 
-    var gamestate = GameState(SevenBag).init(
+    var gamestate: GameState(SevenBag) = .init(
         SevenBag.init(0),
         &engine.kicks.srsPlus,
     );
 
-    const nn = try NN.load(allocator, "NNs/Fast3.json");
+    const nn: NN = try .load(allocator, "NNs/Fast3.json");
     defer nn.deinit(allocator);
 
     const placements = try allocator.alloc(Placement, 15);
@@ -531,51 +531,51 @@ test "6-line PC" {
 }
 
 test isPcPossible {
-    var playfield = BoardMask{};
+    var playfield: BoardMask = .{};
     playfield.mask |= @as(u64, 0b0111111110) << 30;
     playfield.mask |= @as(u64, 0b0010000000) << 20;
     playfield.mask |= @as(u64, 0b0000001000) << 10;
     playfield.mask |= @as(u64, 0b0000001001);
     try expect(isPcPossible(playfield, 4));
 
-    playfield = BoardMask{};
+    playfield = .{};
     playfield.mask |= @as(u64, 0b0000000000) << 30;
     playfield.mask |= @as(u64, 0b0010011000) << 20;
     playfield.mask |= @as(u64, 0b0000011000) << 10;
     playfield.mask |= @as(u64, 0b0000011001);
     try expect(isPcPossible(playfield, 4));
 
-    playfield = BoardMask{};
+    playfield = .{};
     playfield.mask |= @as(u64, 0b0010011100) << 20;
     playfield.mask |= @as(u64, 0b0000011000) << 10;
     playfield.mask |= @as(u64, 0b0000011011);
     try expect(!isPcPossible(playfield, 3));
 
-    playfield = BoardMask{};
+    playfield = .{};
     playfield.mask |= @as(u64, 0b0010010000) << 20;
     playfield.mask |= @as(u64, 0b0000001000) << 10;
     playfield.mask |= @as(u64, 0b0000001011);
     try expect(isPcPossible(playfield, 3));
 
-    playfield = BoardMask{};
+    playfield = .{};
     playfield.mask |= @as(u64, 0b0100011100) << 20;
     playfield.mask |= @as(u64, 0b0010001000) << 10;
     playfield.mask |= @as(u64, 0b0111111011);
     try expect(!isPcPossible(playfield, 3));
 
-    playfield = BoardMask{};
+    playfield = .{};
     playfield.mask |= @as(u64, 0b0100010000) << 20;
     playfield.mask |= @as(u64, 0b0010011000) << 10;
     playfield.mask |= @as(u64, 0b0100011011);
     try expect(isPcPossible(playfield, 3));
 
-    playfield = BoardMask{};
+    playfield = .{};
     playfield.mask |= @as(u64, 0b0100111000) << 20;
     playfield.mask |= @as(u64, 0b0011011100) << 10;
     playfield.mask |= @as(u64, 0b1100111000);
     try expect(!isPcPossible(playfield, 3));
 
-    playfield = BoardMask{};
+    playfield = .{};
     playfield.mask |= @as(u64, 0b0100111000) << 20;
     playfield.mask |= @as(u64, 0b0011111100) << 10;
     playfield.mask |= @as(u64, 0b0100111000);
@@ -584,7 +584,7 @@ test isPcPossible {
 
 test getFeatures {
     const features = getFeatures(
-        BoardMask{
+        .{
             .mask = 0b0000000100 << (5 * BoardMask.WIDTH) |
                 0b0000100000 << (4 * BoardMask.WIDTH) |
                 0b0011010001 << (3 * BoardMask.WIDTH) |
@@ -593,7 +593,7 @@ test getFeatures {
                 0b1111111111 << (0 * BoardMask.WIDTH),
         },
         6,
-        [_]bool{true} ** NN.INPUT_COUNT,
+        @splat(true),
     );
     try expect(features.len == NN.INPUT_COUNT);
     try expect(features[0] == 11.7046995);
