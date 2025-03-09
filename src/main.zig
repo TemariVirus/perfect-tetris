@@ -13,6 +13,7 @@ const ValidateArgs = validate.ValidateArgs;
 
 const NN = @import("perfect-tetris").NN;
 const NNInner = @import("zmai").genetic.neat.NN;
+const kicks = @import("engine").kicks;
 
 const zig_args = @import("zig-args");
 const Error = zig_args.Error;
@@ -60,6 +61,26 @@ const Verb = union(VerbType) {
     display: DisplayArgs,
     fumen: FumenArgs,
     validate: ValidateArgs,
+};
+
+pub const KicksOption = enum {
+    none,
+    none180,
+    srs,
+    srs180,
+    srsPlus,
+    srsTetrio,
+
+    pub fn toEngine(self: KicksOption) *const kicks.KickFn {
+        return &switch (self) {
+            .none => kicks.none,
+            .none180 => kicks.none180,
+            .srs => kicks.srs,
+            .srs180 => kicks.srs180,
+            .srsPlus => kicks.srsPlus,
+            .srsTetrio => kicks.srsTetrio,
+        };
+    }
 };
 
 pub fn main() !void {

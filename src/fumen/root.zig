@@ -11,27 +11,8 @@ const NN = root.NN;
 const FindPcError = root.FindPcError;
 
 const enumValuesHelp = @import("../main.zig").enumValuesHelp;
+const KicksOption = @import("../main.zig").KicksOption;
 pub const FumenReader = @import("FumenReader.zig");
-
-pub const Kicks = enum {
-    none,
-    none180,
-    srs,
-    srs180,
-    srsPlus,
-    srsTetrio,
-
-    pub fn toEngine(self: Kicks) *const kicks.KickFn {
-        return &switch (self) {
-            .none => kicks.none,
-            .none180 => kicks.none180,
-            .srs => kicks.srs,
-            .srs180 => kicks.srs180,
-            .srsPlus => kicks.srsPlus,
-            .srsTetrio => kicks.srsTetrio,
-        };
-    }
-};
 
 pub const PieceKindArg = enum {
     i,
@@ -82,7 +63,7 @@ pub const OutputMode = enum {
 pub const FumenArgs = struct {
     append: bool = false,
     help: bool = false,
-    kicks: Kicks = .srs,
+    kicks: KicksOption = .srs,
     @"min-height": u7 = 1,
     nn: ?[]const u8 = null,
     save: ?PieceKindArg = null,
@@ -119,7 +100,7 @@ pub const FumenArgs = struct {
             .help = "Print this help message.",
             .kicks = std.fmt.comptimePrint(
                 "Kick/rotation system to use. For kick systems that have a 180-less and 180 variant, the 180-less variant has no 180 rotations. The 180 variant has 180 rotations but no 180 kicks. " ++
-                    enumValuesHelp(FumenArgs, Kicks) ++
+                    enumValuesHelp(FumenArgs, KicksOption) ++
                     " (default: {s})",
                 .{@tagName((FumenArgs{}).kicks)},
             ),

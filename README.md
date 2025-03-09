@@ -26,11 +26,21 @@ solver runs on a single thread in this demo.
 
 `-h`, `--help` Print the help message.
 
+`-k`, `--kicks` Kick/rotation system to use. For kick systems that have a
+180-less and 180 variant, the 180-less variant has no 180 rotations. The 180
+variant has 180 rotations but no 180 kicks. Supported Values:
+[`none`,`none180`,`srs`,`srs180`,`srsPlus`,`srsTetrio`] (default: `srsPlus`)
+
+`-m`, `--min-height` The minimum height of PCs to find. (default: `4`)
+
 `-n`, `--nn` The path to the neural network to use for the solver. The path may
 be absolute, relative to the current working directory, or relative to the
 executable's directory. If not provided, a default built-in NN will be used.
 
 `-p`, `--pps` The target pieces per second of the bot. (default: `10`)
+
+`-s`, `--seed` The seed to use for the 7-bag randomizer. If not provided, a
+random value will be used.
 
 ### Display
 

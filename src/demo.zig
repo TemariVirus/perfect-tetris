@@ -18,6 +18,9 @@ const root = @import("perfect-tetris");
 const NN = root.NN;
 const Placement = root.Placement;
 
+const enumValuesHelp = @import("main.zig").enumValuesHelp;
+const KicksOption = @import("main.zig").KicksOption;
+
 const FRAMERATE = 60;
 const FPS_TIMING_WINDOW = FRAMERATE * 2;
 /// The maximum number of perfect clears to calculate in advance.
@@ -25,15 +28,21 @@ const MAX_PC_QUEUE = 128;
 
 pub const DemoArgs = struct {
     help: bool = false,
+    kicks: KicksOption = .srsPlus,
+    @"min-height": u7 = 4,
     nn: ?[]const u8 = null,
     pps: u32 = 10,
+    seed: ?u64 = null,
 
-    pub const wrap_len: u32 = 45;
+    pub const wrap_len: u32 = 48;
 
     pub const shorthands = .{
         .h = "help",
+        .k = "kicks",
+        .m = "min-height",
         .n = "nn",
         .p = "pps",
+        .s = "seed",
     };
 
     pub const meta = .{
@@ -41,8 +50,22 @@ pub const DemoArgs = struct {
         .full_text = "Demostrates the perfect clear solver's speed with a tetris playing bot.",
         .option_docs = .{
             .help = "Print this help message.",
+            .kicks = std.fmt.comptimePrint(
+                "Kick/rotation system to use. For kick systems that have a 180-less and 180 variant, the 180-less variant has no 180 rotations. The 180 variant has 180 rotations but no 180 kicks. " ++
+                    enumValuesHelp(DemoArgs, KicksOption) ++
+                    " (default: {s})",
+                .{@tagName((DemoArgs{}).kicks)},
+            ),
+            .@"min-height" = std.fmt.comptimePrint(
+                "The minimum height of PCs to find. (default: {d})",
+                .{(DemoArgs{}).@"min-height"},
+            ),
             .nn = "The path to the neural network to use for the solver. The path may be absolute, relative to the current working directory, or relative to the executable's directory. If not provided, a default built-in NN will be used.",
-            .pps = std.fmt.comptimePrint("The target pieces per second of the bot. (default: {})", .{(DemoArgs{}).pps}),
+            .pps = std.fmt.comptimePrint(
+                "The target pieces per second of the bot. (default: {d})",
+                .{(DemoArgs{}).pps},
+            ),
+            .seed = "The seed to use for the 7-bag randomizer. If not provided, a random value will be used.",
         },
     };
 };
@@ -59,6 +82,7 @@ pub fn main(allocator: Allocator, args: DemoArgs, nn: ?NN) !void {
     );
     defer nterm.deinit();
 
+    const seed = args.seed orelse std.crypto.random.int(u64);
     const settings: engine.GameSettings = .{
         .g = 0,
         .display_stats = .{
@@ -70,8 +94,8 @@ pub fn main(allocator: Allocator, args: DemoArgs, nn: ?NN) !void {
     };
     var player: Player = .init(
         "PC Solver",
-        SevenBag.init(0),
-        kicks.srsPlus,
+        SevenBag.init(seed),
+        args.kicks.toEngine(),
         settings,
         .{
             .left = 1,
@@ -88,7 +112,13 @@ pub fn main(allocator: Allocator, args: DemoArgs, nn: ?NN) !void {
 
     const pc_thread: std.Thread = try .spawn(.{
         .allocator = allocator,
-    }, pcThread, .{ allocator, nn, player.state, &pc_queue });
+    }, pcThread, .{
+        allocator,
+        nn,
+        args.@"min-height",
+        player.state,
+        &pc_queue,
+    });
     pc_thread.detach();
 
     var render_timer: PeriodicTrigger = .init(time.ns_per_s / FRAMERATE, true);
@@ -150,10 +180,12 @@ fn placePcPiece(
 fn pcThread(
     allocator: Allocator,
     nn: ?NN,
+    min_height: u7,
     state: GameState,
     queue: *SolutionList,
 ) !void {
     var game = state;
+    const max_len = @max(15, ((@as(usize, min_height) + 1) * 10 / 4));
 
     while (true) {
         while (queue.items.len >= MAX_PC_QUEUE) {
@@ -167,8 +199,8 @@ fn pcThread(
             allocator,
             game,
             nn,
-            2,
-            15,
+            min_height,
+            max_len,
             null,
         );
         for (solution) |placement| {
