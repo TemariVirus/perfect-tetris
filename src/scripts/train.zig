@@ -146,7 +146,6 @@ const handle_signals = [_]c_int{
     SIG.ABRT,
     SIG.INT,
     SIG.QUIT,
-    SIG.STOP,
     SIG.TERM,
 };
 fn setupExitHandler() void {
