@@ -133,7 +133,7 @@ pub fn main(
 
     const gamestate = parsed.toGameState(args.kicks.toEngine());
     const solution = root.findPcAuto(
-        FumenReader.FixedBag,
+        root.FixedBag,
         allocator,
         gamestate,
         nn,

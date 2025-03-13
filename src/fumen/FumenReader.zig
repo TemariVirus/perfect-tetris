@@ -17,6 +17,7 @@ const PieceKind = engine.pieces.PieceKind;
 const Position = engine.pieces.Position;
 
 const FumenArgs = @import("root.zig").FumenArgs;
+const FixedBag = @import("perfect-tetris").FixedBag;
 const Placement = @import("perfect-tetris").Placement;
 
 const FumenReader = @This();
@@ -56,30 +57,6 @@ hold: ?PieceKind = null,
 current: ?PieceKind = null,
 // Next pieces are stored in reverse order
 next: NextArray,
-
-pub const FixedBag = struct {
-    pieces: []const PieceKind,
-    index: usize = 0,
-
-    pub fn init(seed: u64) FixedBag {
-        _ = seed; // autofix
-        return .{ .pieces = &.{} };
-    }
-
-    pub fn next(self: *FixedBag) PieceKind {
-        if (self.index >= self.pieces.len) {
-            return undefined;
-        }
-
-        defer self.index += 1;
-        return self.pieces[self.index];
-    }
-
-    pub fn setSeed(self: *FixedBag, seed: u64) void {
-        _ = seed; // autofix
-        self.index = 0;
-    }
-};
 
 const FumenBlock = enum(u8) {
     empty = 0,

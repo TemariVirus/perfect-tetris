@@ -450,6 +450,336 @@ fn orderScore(playfield: BoardMask, max_height: u3, nn: NN) f32 {
     return nn.predict(features);
 }
 
+pub const SolutionIterator = struct {
+    depth: u4,
+    pieces_needed: u4,
+    max_height: u3,
+    pieces: []PieceKind,
+    placements: []Placement,
+    do_o_rotations: bool,
+    kicks: *const KickFn,
+    cache: std.AutoHashMap(Node, void),
+    save_hold: ?PieceKind,
+    states: []State,
+
+    const Node = struct {
+        bytes: [16]u8 = @splat(255),
+    };
+    const PackedPlacement = packed struct {
+        facing: Facing,
+        pos: u6,
+    };
+
+    pub const State = struct {
+        playfield: BoardMask,
+        queue: movegen.MoveQueue,
+        max_height: u3,
+        held_odd_times: bool,
+    };
+
+    pub fn init(
+        comptime BagType: type,
+        allocator: Allocator,
+        game: GameState(BagType),
+        min_height: u3,
+        placements: []Placement,
+        save_hold: ?PieceKind,
+    ) !@This() {
+        const playfield: BoardMask = .from(game.playfield);
+        var pc_info = root.minPcInfo(game.playfield) orelse
+            return FindPcError.NoPcExists;
+        if (pc_info.height < min_height) {
+            const extra_iters = std.math.divCeil(
+                u6,
+                @as(u6, min_height) - pc_info.height,
+                2,
+            ) catch unreachable;
+            pc_info.height += extra_iters * 2;
+            pc_info.pieces_needed += extra_iters * 5;
+        }
+
+        // 6 is highest supported height
+        if (pc_info.height > 6) {
+            return FindPcError.SolutionTooLong;
+        }
+
+        const pieces = try getPieces(BagType, allocator, game, placements.len + 1);
+        errdefer allocator.free(pieces);
+
+        if (save_hold) |hold| {
+            // Requested hold piece is not in queue/hold
+            for (pieces) |p| {
+                if (p == hold) {
+                    break;
+                }
+            } else {
+                return FindPcError.ImpossibleSaveHold;
+            }
+        }
+
+        var cache: std.AutoHashMap(Node, void) = .init(allocator);
+        errdefer cache.deinit();
+
+        // Allocate a state for each placement
+        const states = try allocator.alloc(State, placements.len + 1);
+        errdefer allocator.free(states);
+        for (0..states.len) |i| {
+            states[i] = .{
+                .playfield = undefined,
+                .queue = .init(allocator, {}),
+                .max_height = undefined,
+                .held_odd_times = false,
+            };
+        }
+        errdefer for (states) |state| {
+            state.queue.deinit();
+        };
+        const do_o_rotations = hasOKicks(game.kicks);
+
+        // Prepate initial state
+        states[0].playfield = playfield;
+        states[0].max_height = @intCast(pc_info.height);
+
+        return .{
+            .depth = 0,
+            .pieces_needed = @intCast(pc_info.pieces_needed),
+            .max_height = @intCast(pc_info.height),
+            .pieces = pieces,
+            .placements = placements,
+            .do_o_rotations = do_o_rotations,
+            .kicks = game.kicks,
+            .cache = cache,
+            .save_hold = save_hold,
+            .states = states,
+        };
+    }
+
+    pub fn deinit(self: *@This()) void {
+        self.cache.allocator.free(self.pieces);
+        for (self.states) |state| {
+            state.queue.deinit();
+        }
+        self.cache.allocator.free(self.states);
+        self.cache.deinit();
+        self.* = undefined;
+    }
+
+    pub fn done(self: @This()) bool {
+        return self.pieces.len == 0;
+    }
+
+    fn markAsDone(self: *@This()) void {
+        self.cache.allocator.free(self.pieces);
+        self.pieces.len = 0;
+    }
+
+    // TODO: increase pieces_needed and max_height when queues are emptied
+    pub fn next(self: *@This()) !?[]Placement {
+        if (self.done()) {
+            return null;
+        }
+
+        while (true) {
+            const state = &self.states[self.depth];
+            const pieces = self.pieces[self.depth..];
+
+            // Base case; check for perfect clear
+            if (self.depth == self.pieces_needed) {
+                self.depth -= 1;
+                if (state.max_height == 0) {
+                    const node = self.placementNode(self.pieces_needed, self.pieces_needed);
+                    if ((try self.cache.getOrPut(node)).found_existing) {
+                        continue;
+                    }
+
+                    return self.placements[0..self.pieces_needed];
+                }
+                continue;
+            }
+
+            if (state.queue.items.len == 0) {
+                // Unhold if held an odd number of times so that pieces are in the same order
+                if (state.held_odd_times) {
+                    std.mem.swap(PieceKind, &pieces[0], &pieces[1]);
+                }
+                try self.prepareQueue();
+            }
+
+            const move = state.queue.removeOrNull() orelse {
+                if (self.depth == 0) {
+                    @branchHint(.unlikely);
+                    self.markAsDone();
+                    return null;
+                }
+
+                self.depth -= 1;
+                continue;
+            };
+            const placement = move.placement;
+            // Hold if needed
+            if (placement.piece.kind != pieces[0]) {
+                std.mem.swap(PieceKind, &pieces[0], &pieces[1]);
+                state.held_odd_times = !state.held_odd_times;
+            }
+            assert(pieces[0] == placement.piece.kind);
+
+            var board = state.playfield;
+            board.place(.from(placement.piece), placement.pos);
+            const cleared = board.clearLines(placement.pos.y);
+
+            // Pass data to next state
+            self.placements[self.depth] = placement;
+            self.states[self.depth + 1].playfield = board;
+            self.states[self.depth + 1].max_height = state.max_height - cleared;
+            self.depth += 1;
+            continue;
+        }
+    }
+
+    fn prepareQueue(self: *@This()) !void {
+        const pieces = self.pieces[self.depth..];
+        const state = &self.states[self.depth];
+        state.held_odd_times = false;
+
+        const node = self.placementNode(self.depth, self.depth + 1);
+        if ((try self.cache.getOrPut(node)).found_existing) {
+            return;
+        }
+
+        // Check if requested hold piece is in queue/hold
+        const can_hold = if (self.save_hold) |hold| blk: {
+            const idx = std.mem.lastIndexOfScalar(PieceKind, pieces, hold) orelse
+                return;
+            break :blk idx >= 2 or (pieces.len > 1 and pieces[0] == pieces[1]);
+        } else true;
+
+        // Check for forced hold
+        if (!can_hold and pieces[1] != self.save_hold.?) {
+            std.mem.swap(PieceKind, &pieces[0], &pieces[1]);
+            state.held_odd_times = !state.held_odd_times;
+        }
+
+        // Add moves to queue
+        const m1 = movegen.allPlacements(
+            state.playfield,
+            self.do_o_rotations,
+            self.kicks,
+            pieces[0],
+            state.max_height,
+        );
+        // TODO: Prune based on piece dependencies?
+        movegen.orderMoves(
+            &state.queue,
+            state.playfield,
+            pieces[0],
+            m1,
+            state.max_height,
+            isPcPossible,
+            undefined,
+            orderNone,
+        );
+        // Check for unique hold
+        if (can_hold and pieces.len > 1 and pieces[0] != pieces[1]) {
+            const m2 = movegen.allPlacements(
+                state.playfield,
+                self.do_o_rotations,
+                self.kicks,
+                pieces[1],
+                state.max_height,
+            );
+            movegen.orderMoves(
+                &state.queue,
+                state.playfield,
+                pieces[1],
+                m2,
+                state.max_height,
+                isPcPossible,
+                undefined,
+                orderNone,
+            );
+        }
+    }
+
+    fn placementNode(self: @This(), depth: u4, hold_index: usize) Node {
+        var placement_board: [16]Placement = undefined;
+        @memcpy(placement_board[0..depth], self.placements[0..depth]);
+        std.sort.pdq(Placement, placement_board[0..depth], {}, (struct {
+            fn lt(_: void, lhs: Placement, rhs: Placement) bool {
+                if (@intFromEnum(lhs.piece.kind) < @intFromEnum(rhs.piece.kind)) {
+                    return true;
+                }
+                if (@intFromEnum(lhs.piece.kind) > @intFromEnum(rhs.piece.kind)) {
+                    return false;
+                }
+                const pos1 = canonicalPosition(lhs.piece, lhs.pos);
+                const pos2 = canonicalPosition(rhs.piece, rhs.pos);
+                const Packed = packed struct {
+                    facing: Facing,
+                    x: u4,
+                    y: u6,
+                };
+                const Int = std.meta.Int(.unsigned, @bitSizeOf(Packed));
+                return @as(Int, @bitCast(Packed{
+                    .facing = canonicalFacing(lhs.piece),
+                    .x = pos1.x,
+                    .y = pos1.y,
+                })) < @as(Int, @bitCast(Packed{
+                    .facing = canonicalFacing(rhs.piece),
+                    .x = pos2.x,
+                    .y = pos2.y,
+                }));
+            }
+        }).lt);
+
+        var node: Node = .{};
+        for (placement_board[0..depth], 0..) |placement, i| {
+            const pos = canonicalPosition(placement.piece, placement.pos);
+            node.bytes[i] = @bitCast(PackedPlacement{
+                .facing = canonicalFacing(placement.piece),
+                .pos = pos.y * BoardMask.WIDTH + pos.x,
+            });
+        }
+        node.bytes[depth] = @intFromEnum(self.pieces[hold_index]);
+        return node;
+    }
+
+    fn canonicalCenter(piece: engine.pieces.Piece) engine.pieces.Position {
+        return switch (piece.kind) {
+            .i, .s, .z => switch (piece.facing) {
+                .up, .down => .{ .x = 1, .y = 2 },
+                .right, .left => .{ .x = 2, .y = 2 },
+            },
+            .o, .t, .j, .l => .{ .x = 1, .y = 1 },
+        };
+    }
+
+    fn canonicalPosition(
+        peice: engine.pieces.Piece,
+        pos: engine.pieces.Position,
+    ) struct { x: u4, y: u6 } {
+        const canonical_pos = canonicalCenter(peice).add(pos);
+        return .{
+            .x = @intCast(canonical_pos.x),
+            .y = @intCast(canonical_pos.y),
+        };
+    }
+
+    fn canonicalFacing(piece: engine.pieces.Piece) Facing {
+        return switch (piece.kind) {
+            .i, .s, .z => switch (piece.facing) {
+                .up, .down => .up,
+                .right, .left => .right,
+            },
+            .o => .up,
+            .t, .j, .l => piece.facing,
+        };
+    }
+};
+
+fn orderNone(_: BoardMask, _: u3, _: NN) f32 {
+    return 0;
+}
+
 test "4-line PC" {
     const allocator = std.testing.allocator;
 

@@ -2,10 +2,11 @@ const std = @import("std");
 const time = std.time;
 
 const engine = @import("engine");
-const GameState = engine.GameState(SevenBag);
+const GameState = engine.GameState;
 const SevenBag = engine.bags.SevenBag;
 
 const root = @import("perfect-tetris");
+const FixedBag = root.FixedBag;
 const NN = root.NN;
 const pc = root.pc;
 const pc_slow = root.pc_slow;
@@ -16,18 +17,29 @@ pub fn main() !void {
 
     // Mean: 10.697ms ± 26.627ms
     // Max: 237.634ms
-    try pcBenchmark(4, "NNs/Fast3.json", false);
+    // try pcBenchmark(4, "NNs/Fast3.json", false);
 
     // Mean: 14.696ms ± 35.902ms
     // Max: 322.321ms
-    try pcBenchmark(4, "NNs/Fast3.json", true);
+    // try pcBenchmark(4, "NNs/Fast3.json", true);
 
     // Mean: 9.253ms ± 21.252ms
     // Max: 217.802ms
-    try pcBenchmark(6, "NNs/Fast3.json", false);
+    // try pcBenchmark(6, "NNs/Fast3.json", false);
+
+    // /Sturctures with same shape and same piece kinds are considered the same (may look different to human)
+    // Solutions: 118 (not sure if correct)
+    // Time: 21.001s
+    // /Only solves that looks same to human
+    // Solutions: 8622 (should be 1315)
+    // Time: 53.674s
+    try pcAllBenchmark(
+        4,
+        &.{ .t, .o, .l, .s, .z, .j, .i, .o, .t, .s, .z },
+    );
 
     // Mean: 43ns
-    getFeaturesBenchmark();
+    // getFeaturesBenchmark();
 }
 
 fn mean(T: type, values: []const T) T {
@@ -84,7 +96,7 @@ pub fn pcBenchmark(
 
     var times: [RUN_COUNT]u64 = undefined;
     for (0..RUN_COUNT) |i| {
-        const gamestate: GameState = .init(
+        const gamestate: GameState(SevenBag) = .init(
             SevenBag.init(i),
             &engine.kicks.srsPlus,
         );
@@ -128,6 +140,83 @@ pub fn pcBenchmark(
     std.debug.print("Max: {}\n", .{std.fmt.fmtDuration(max_time)});
 }
 
+pub fn pcAllBenchmark(comptime height: u8, pieces: []const engine.pieces.PieceKind) !void {
+    std.debug.print(
+        \\
+        \\------------------------
+        \\    PC all Benchmark
+        \\------------------------
+        \\Height: {}
+        \\------------------------
+        \\
+    , .{height});
+
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const placements = try allocator.alloc(root.Placement, height * 10 / 4);
+    defer allocator.free(placements);
+
+    const bag: FixedBag = .{ .pieces = pieces };
+    const game: GameState(FixedBag) = .init(bag, engine.kicks.srs);
+    var iter: pc.SolutionIterator = try .init(
+        FixedBag,
+        allocator,
+        game,
+        height,
+        placements,
+        null,
+    );
+    defer iter.deinit();
+
+    const f = try std.fs.cwd().createFile("all.pc", .{});
+    defer f.close();
+    const writer = f.writer();
+
+    const start = std.time.nanoTimestamp();
+
+    var count: usize = 0;
+    while (try iter.next()) |sol| {
+        count += 1;
+
+        var holds: u16 = 0;
+        var ps: [height * 10 / 4]u8 = @splat(0);
+
+        const sequence = try root.PCSolution.NextArray.fromSlice(pieces);
+
+        var hold = sequence.buffer[0];
+        var current = sequence.buffer[1];
+        for (sol, 0..) |placement, i| {
+            // Use canonical position so that the position is always in the
+            // range [0, 59]
+            const canon_pos = placement.piece
+                .canonicalPosition(placement.pos);
+            const pos = canon_pos.y * 10 + canon_pos.x;
+            std.debug.assert(pos < 60);
+            ps[i] = @intFromEnum(placement.piece.facing) |
+                (@as(u8, pos) << 2);
+
+            if (current != placement.piece.kind) {
+                holds |= @as(u16, 1) << @intCast(i);
+                hold = current;
+            }
+            // Only update current if it's not the last piece
+            if (i < sol.len - 1) {
+                current = sequence.buffer[i + 2];
+            }
+        }
+
+        try writer.writeInt(u48, root.PCSolution.packNext(sequence), .little);
+        try writer.writeInt(u16, holds, .little);
+        try writer.writeAll(&ps);
+    }
+
+    const t: u64 = @intCast(std.time.nanoTimestamp() - start);
+    std.debug.print("Solutions: {}\n", .{count});
+    std.debug.print("Time: {}\n", .{std.fmt.fmtDuration(t)});
+}
+
 pub fn getFeaturesBenchmark() void {
     const RUN_COUNT = 100_000_000;
 
@@ -142,7 +231,7 @@ pub fn getFeaturesBenchmark() void {
     // Randomly place 3 pieces
     var xor: std.Random.Xoroshiro128 = .init(0);
     const rand = xor.random();
-    var game: GameState = .init(.init(xor.next()), &engine.kicks.srsPlus);
+    var game: GameState(SevenBag) = .init(.init(xor.next()), &engine.kicks.srsPlus);
     for (0..3) |_| {
         game.current.facing = rand.enumValue(engine.pieces.Facing);
         game.pos.x = rand.intRangeAtMost(
