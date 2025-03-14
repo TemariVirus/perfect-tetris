@@ -95,11 +95,12 @@ be absolute, relative to the current working directory, or relative to the
 executable's directory. If not provided, a default built-in NN will be used.
 
 `-s`, `--save` The piece type to save in the hold slot by the end of the
-perfect clear. This option is not case-sensitive. If not specified, any piece may go into the hold slot. Supported
-Values: [`i`,`o`,`t`,`s`,`z`,`l`,`j`]
+perfect clear. This option is not case-sensitive. If not specified, any piece
+may go into the hold slot. Supported Values: [`i`,`o`,`t`,`s`,`z`,`l`,`j`]
 
-`-t`, `--output-type` The type of fumen to output. If append is true, this
-option is ignored. Supported Values: [`edit`, `list`, `view`] (default: `view`)
+`-t`, `--output-type` The type of fumen to output. Overwrites the input fumen's
+type even when append is true. Supported Values: [edit,list,view]
+(default: view)
 
 `-v`, `--verbose` Print solve time and solution length to stderr.
 

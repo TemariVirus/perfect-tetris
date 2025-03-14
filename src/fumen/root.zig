@@ -70,7 +70,7 @@ pub const FumenArgs = struct {
     @"output-type": OutputMode = .view,
     verbose: bool = false,
 
-    pub const wrap_len: u32 = 35;
+    pub const wrap_len: u32 = 37;
 
     pub const shorthands = .{
         .a = "append",
@@ -109,7 +109,7 @@ pub const FumenArgs = struct {
             .save = "The piece type to save in the hold slot by the end of the perfect clear. This option is not case-sensitive. If not specified, any piece may go into the hold slot. " ++
                 enumValuesHelp(FumenArgs, PieceKind),
             .@"output-type" = std.fmt.comptimePrint(
-                "The type of fumen to output. If append is true, this option is ignored. " ++
+                "The type of fumen to output. Overwrites the input fumen's type even when append is true. " ++
                     enumValuesHelp(FumenArgs, OutputMode) ++
                     " (default: {s})",
                 .{@tagName((FumenArgs{}).@"output-type")},
