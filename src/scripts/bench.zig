@@ -15,15 +15,21 @@ pub fn main() !void {
     // zig build bench -Dcpu=x86_64_v3
 
     // Mean: 10.697ms ± 26.627ms
-    // Max: 237.634ms
+    // Max:  237.634ms
+    // Mean memory usage: 245.380KiB
+    // Max memory usage:  9.455MiB
     try pcBenchmark(4, "NNs/Fast3.json", false);
 
     // Mean: 14.696ms ± 35.902ms
-    // Max: 322.321ms
+    // Max:  322.321ms
+    // Mean memory usage: 1.372MiB
+    // Max memory usage:  51.335MiB
     try pcBenchmark(4, "NNs/Fast3.json", true);
 
     // Mean: 9.253ms ± 21.252ms
-    // Max: 217.802ms
+    // Max:  217.802ms
+    // Mean memory usage: 173.771KiB
+    // Max memory usage:  2.430MiB
     try pcBenchmark(6, "NNs/Fast3.json", false);
 
     // Mean: 43ns
@@ -83,17 +89,20 @@ pub fn pcBenchmark(
     defer allocator.free(placements);
 
     var times: [RUN_COUNT]u64 = undefined;
+    var mems: [RUN_COUNT]u64 = undefined;
     for (0..RUN_COUNT) |i| {
         const gamestate: GameState = .init(
             SevenBag.init(i),
             &engine.kicks.srsPlus,
         );
+        var arena: std.heap.ArenaAllocator = .init(allocator);
+        defer arena.deinit();
 
         const solve_start = time.nanoTimestamp();
         const solution = if (slow)
             try pc_slow.findPc(
                 SevenBag,
-                allocator,
+                arena.allocator(),
                 gamestate,
                 nn,
                 height,
@@ -103,7 +112,7 @@ pub fn pcBenchmark(
         else
             try pc.findPc(
                 SevenBag,
-                allocator,
+                arena.allocator(),
                 gamestate,
                 nn,
                 height,
@@ -112,6 +121,8 @@ pub fn pcBenchmark(
             );
         times[i] = @intCast(time.nanoTimestamp() - solve_start);
         std.mem.doNotOptimizeAway(solution);
+
+        mems[i] = arena.queryCapacity();
     }
 
     const avg_time: u64 = mean(u64, &times);
@@ -125,7 +136,12 @@ pub fn pcBenchmark(
         std.fmt.fmtDuration(avg_time),
         std.fmt.fmtDuration(time_std),
     });
-    std.debug.print("Max: {}\n", .{std.fmt.fmtDuration(max_time)});
+    std.debug.print("Max:  {}\n", .{std.fmt.fmtDuration(max_time)});
+
+    const avg_mem: u64 = mean(u64, &mems);
+    const max_mem: u64 = max(u64, &mems);
+    std.debug.print("Mean memory usage: {:.3}\n", .{std.fmt.fmtIntSizeBin(avg_mem)});
+    std.debug.print("Max memory usage:  {:.3}\n", .{std.fmt.fmtIntSizeBin(max_mem)});
 }
 
 pub fn getFeaturesBenchmark() void {

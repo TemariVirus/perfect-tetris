@@ -1,7 +1,8 @@
 # perfect-tetris
 
 Blazingly fast Tetris perfect clear solver. Accepts input in fumen format and
-outputs solutions in fumen format.
+outputs solutions in fumen format. For performance metrics, check out
+[benchmarks](#benchmarks).
 
 ## Usage
 
@@ -171,6 +172,21 @@ Trains a population of neural networks to solve perfect clears as fast as
 possible. The population is saved at the end of every generation.
 
 Settings may be adjusted in the top-level declarations in `src/scripts/train.zig`.
+
+## Benchmarks
+
+```txt
+CPU: Intel Core i7-8700
+OS: Windows 11
+Run command: zig build bench -Dcpu=x86_64_v3
+```
+
+The results below are agregated over 200 random 1st PC sequences from a 7-bag randomiser.
+
+| PC height | Kick system | Mean time | Max time  | Mean memory | Max memory |
+| --------- | ----------- | --------- | --------- | ----------- | ---------- |
+| 4         | SRS+        | 10.697ms  | 237.634ms | 245.380KiB  | 9.455MiB   |
+| 6         | SRS+        | 9.253ms   | 217.802ms | 173.771KiB  | 2.430MiB   |
 
 ## .pc file format
 
