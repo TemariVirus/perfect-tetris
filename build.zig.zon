@@ -1,6 +1,6 @@
 .{
     .name = .perfect_tetris,
-    .version = "1.2.1",
+    .version = "1.2.2",
     .fingerprint = 0xf8c558c903285569,
     .minimum_zig_version = "0.14.0",
     .dependencies = .{
