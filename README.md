@@ -119,6 +119,14 @@ solutions.
 
 `-h`, `--help` Print the help message.
 
+### Version
+
+```bash
+pc version
+```
+
+Prints the program's version.
+
 ## Build commands
 
 You will need to have Zig installed to build the project. You can download Zig
