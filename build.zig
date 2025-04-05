@@ -92,6 +92,26 @@ fn stripModuleRecursive(module: *Build.Module) void {
     }
 }
 
+fn packageVersion(b: *Build) []const u8 {
+    var ast = std.zig.Ast.parse(b.allocator, @embedFile("build.zig.zon"), .zon) catch
+        @panic("Out of memory");
+    defer ast.deinit(b.allocator);
+
+    var buf: [2]std.zig.Ast.Node.Index = undefined;
+    const zon = ast.fullStructInit(&buf, ast.nodes.items(.data)[0].lhs) orelse
+        @panic("Failed to parse build.zig.zon");
+
+    for (zon.ast.fields) |field| {
+        const field_name = ast.tokenSlice(ast.firstToken(field) - 2);
+        if (std.mem.eql(u8, field_name, "version")) {
+            const version_string = ast.tokenSlice(ast.firstToken(field));
+            // Remove surrounding quotes
+            return version_string[1 .. version_string.len - 1];
+        }
+    }
+    @panic("Field 'version' missing from build.zig.zon");
+}
+
 fn buildExe(
     b: *Build,
     target: Build.ResolvedTarget,
@@ -99,35 +119,42 @@ fn buildExe(
     root_module: *Build.Module,
     args_module: *Build.Module,
 ) void {
-    const exe = b.addExecutable(.{
-        .name = "pc",
+    const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
-    exe.root_module.addImport("perfect-tetris", root_module);
-    exe.root_module.addImport("zig-args", args_module);
-    exe.root_module.addImport(
+    exe_mod.addImport("perfect-tetris", root_module);
+    exe_mod.addImport("zig-args", args_module);
+    exe_mod.addImport(
         "engine",
         root_module.import_table.get("engine").?,
     );
-    exe.root_module.addImport(
+    exe_mod.addImport(
         "vaxis",
         root_module.import_table.get("vaxis").?,
     );
-    exe.root_module.addImport(
+    exe_mod.addImport(
         "nterm",
         root_module.import_table.get("nterm").?,
     );
-    exe.root_module.addImport(
+    exe_mod.addImport(
         "zmai",
         root_module.import_table.get("zmai").?,
     );
 
+    const options = b.addOptions();
+    options.addOption([]const u8, "version", packageVersion(b));
+    exe_mod.addImport("build", options.createModule());
+
     if (b.option(bool, "strip", "Strip executable binary") orelse false) {
-        stripModuleRecursive(exe.root_module);
+        stripModuleRecursive(exe_mod);
     }
 
+    const exe = b.addExecutable(.{
+        .name = "pc",
+        .root_module = exe_mod,
+    });
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);

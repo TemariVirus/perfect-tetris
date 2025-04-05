@@ -2,6 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const json = std.json;
 
+const build = @import("build");
 const demo = @import("demo.zig");
 const DemoArgs = demo.DemoArgs;
 const display = @import("display.zig");
@@ -42,6 +43,7 @@ const Args = struct {
         \\  display      Displays the perfect clear solutions saved at PATH.
         \\  fumen        Produces a perfect clear solution for each input fumen.
         \\  validate     Validates the perfect clear solutions saved at PATHS.
+        \\  version      Prints the program's version.
         ,
         .option_docs = .{
             .help = "Print this help message.",
@@ -54,6 +56,7 @@ const VerbType = enum {
     display,
     fumen,
     validate,
+    version,
 };
 
 const Verb = union(VerbType) {
@@ -61,6 +64,7 @@ const Verb = union(VerbType) {
     display: DisplayArgs,
     fumen: FumenArgs,
     validate: ValidateArgs,
+    version: void,
 };
 
 pub const KicksOption = enum {
@@ -163,6 +167,9 @@ pub fn main() !void {
             for (exe_args.positionals) |path| {
                 try validate.main(args, path);
             }
+        },
+        .version => {
+            try stdout.print("{s}\n", .{build.version});
         },
     }
 }
