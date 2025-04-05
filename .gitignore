@@ -2,5 +2,6 @@
 zig-out/
 
 .vscode/
+release/
 pops/
 pc-data/
