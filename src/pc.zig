@@ -177,7 +177,9 @@ fn findPcInner(
     }
 
     const node: SearchNode = .{
-        .playfield = @truncate(playfield.mask),
+        // Shift mask up to encode `max_height`
+        .playfield = @truncate(playfield.mask <<
+            (@as(u6, BoardMask.HEIGHT - max_height) * BoardMask.WIDTH)),
         .held = pieces[0],
     };
     if ((try cache.getOrPut(node)).found_existing) {
@@ -314,7 +316,7 @@ pub fn isPcPossible(playfield: BoardMask, max_height: u3) bool {
     }
 
     // The remaining empty cells must also be a multiple of 4, so we don't need
-    // to  check the leftmost segment
+    // to check the leftmost segment
     return true;
 }
 
