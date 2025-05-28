@@ -9,8 +9,8 @@
             .hash = "args-0.0.0-CiLiqv_NAAC97fGpk9hS2K681jkiqPsWP6w3ucb_ctGH",
         },
         .engine = .{
-            .url = "git+https://github.com/TemariVirus/Budget-Tetris-Engine#5bb70a255025fcb2ecddfe251fa868117caec565",
-            .hash = "budget_tetris-0.0.0-dNv9yuG7AQBScGU68tthYWIXn_bTNoQ31U1QSYUpCJGj",
+            .url = "git+https://github.com/TemariVirus/Budget-Tetris-Engine#0cb6aed00250c917d37bdc6f3b7954f93b99d02b",
+            .hash = "budget_tetris-0.0.0-dNv9yta7AQDNix3rPa01i6NVdThW9ruUsHQDAZJZCtmm",
         },
         .vaxis = .{
             .url = "git+https://github.com/rockorager/libvaxis#5b48d2c40c994363f87765fe9737d57c263275a4",
