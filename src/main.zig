@@ -38,6 +38,8 @@ const Args = struct {
         \\Blazingly fast Tetris perfect clear solver. Run `pc COMMAND --help` for
         \\command-specific help.
         \\
+        \\Report issues at https://github.com/TemariVirus/perfect-tetris/issues
+        \\
         \\Commands:
         \\  demo         Demostrates the solver's speed with a tetris playing bot.
         \\  display      Displays the perfect clear solutions saved at PATH.
