@@ -54,7 +54,7 @@ pub const DemoArgs = struct {
             .help = "Print this help message.",
             .kicks = std.fmt.comptimePrint(
                 "Kick/rotation system to use. For kick systems that have a 180-less and 180 variant, the 180-less variant has no 180 rotations. The 180 variant has 180 rotations but no 180 kicks. " ++
-                    enumValuesHelp(DemoArgs, KicksOption) ++
+                    enumValuesHelp(KicksOption) ++
                     " (default: {s})",
                 .{@tagName((DemoArgs{}).kicks)},
             ),

@@ -94,8 +94,7 @@ pub fn pathfind(
 
             // Branch out after movement
             distances.put(new_game.current, new_game.pos, distance);
-            queue.enqueue(.pack(new_game.current, new_game.pos)) catch
-                @panic("Placement queue too small");
+            queue.enqueue(.pack(new_game.current, new_game.pos)) catch unreachable;
         }
     } else {
         return null;

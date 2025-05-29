@@ -211,8 +211,8 @@ pub fn allPlacements(
     kicks: *const KickFn,
     piece_kind: PieceKind,
     max_height: u6,
-) PiecePosSet {
-    return allPlacementsRaw(
+) error{Overflow}!PiecePosSet {
+    return try allPlacementsRaw(
         PiecePosSet,
         PiecePosition,
         PlacementStack,
@@ -235,7 +235,7 @@ pub fn allPlacementsRaw(
     kicks: *const KickFn,
     piece_kind: PieceKind,
     max_height: u7,
-) TPiecePosSet {
+) error{Overflow}!TPiecePosSet {
     var seen: TPiecePosSet = .init();
     var placements: TPiecePosSet = .init();
     var stack = TPlacementStack.init(0) catch unreachable;
@@ -260,10 +260,10 @@ pub fn allPlacementsRaw(
 
         var x = piece.minX();
         while (x <= piece.maxX()) : (x += 1) {
-            stack.append(TPiecePosition.pack(piece, .{
+            try stack.append(TPiecePosition.pack(piece, .{
                 .x = x,
                 .y = @as(i8, max_height) + piece.minY(),
-            })) catch @panic("Placement stack too small");
+            }));
         }
     }
 
@@ -297,9 +297,9 @@ pub fn allPlacementsRaw(
             }
 
             // Branch out after movement
-            stack.append(
+            try stack.append(
                 TPiecePosition.pack(new_game.current, new_game.pos),
-            ) catch @panic("Placement stack too small");
+            );
 
             // Skip this placement if the piece is too high, or if it's not on
             // the ground
@@ -336,7 +336,7 @@ pub fn orderMoves(
     comptime validFn: fn (BoardMask, u3) bool,
     nn: NN,
     comptime scoreFn: fn (BoardMask, u3, NN) f32,
-) void {
+) error{OutOfMemory}!void {
     var iter = moves.iterator(piece);
     while (iter.next()) |placement| {
         var board = playfield;
@@ -347,10 +347,10 @@ pub fn orderMoves(
             continue;
         }
 
-        queue.add(.{
+        try queue.add(.{
             .placement = placement,
             .score = scoreFn(board, max_height, nn),
-        }) catch @panic("Out of memory");
+        });
     }
 }
 

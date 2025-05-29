@@ -179,21 +179,11 @@ fn handleArgsError(err: Error) !void {
     std.process.exit(1);
 }
 
-pub fn enumValuesHelp(ArgsT: type, Enum: type) []const u8 {
-    const max_option_len = blk: {
-        var max_option_len = 0;
-        for (@typeInfo(ArgsT).@"struct".fields) |field| {
-            max_option_len = @max(max_option_len, field.name.len);
-        }
-        break :blk max_option_len;
-    };
-
+pub fn enumValuesHelp(Enum: type) []const u8 {
     const total_len = blk: {
-        var total_len = max_option_len + 13 + "Supported Values:\n".len;
-        for (@typeInfo(Enum).@"enum".fields) |field| {
-            total_len += max_option_len + 15 + field.name.len + 1;
-        }
-        break :blk total_len;
+        var counter = std.io.countingWriter(std.io.null_writer);
+        writeEnumValuesHelp(Enum, counter.writer().any()) catch unreachable;
+        break :blk counter.bytes_written;
     };
 
     var buf: [total_len]u8 = undefined;
@@ -202,18 +192,20 @@ pub fn enumValuesHelp(ArgsT: type, Enum: type) []const u8 {
 
     var str = std.ArrayList(u8).initCapacity(allocator, total_len) catch
         @panic("Out of memory");
-    const writer = str.writer();
-
-    writer.writeAll("Supported Values: [") catch @panic("Out of memory");
-    for (@typeInfo(Enum).@"enum".fields, 0..) |field, i| {
-        writer.writeAll(field.name) catch @panic("Out of memory");
-        if (i < @typeInfo(Enum).@"enum".fields.len - 1) {
-            writer.writeByte(',') catch @panic("Out of memory");
-        }
-    }
-    writer.writeByte(']') catch @panic("Out of memory");
+    writeEnumValuesHelp(Enum, str.writer().any()) catch unreachable;
 
     return str.items;
+}
+
+fn writeEnumValuesHelp(Enum: type, writer: std.io.AnyWriter) !void {
+    try writer.writeAll("Supported Values: [");
+    for (@typeInfo(Enum).@"enum".fields, 0..) |field, i| {
+        try writer.writeAll(field.name);
+        if (i < @typeInfo(Enum).@"enum".fields.len - 1) {
+            try writer.writeByte(',');
+        }
+    }
+    try writer.writeByte(']');
 }
 
 /// Returns the first path that exists, relative to different locations in the

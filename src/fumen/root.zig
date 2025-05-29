@@ -100,17 +100,17 @@ pub const FumenArgs = struct {
             .help = "Print this help message.",
             .kicks = std.fmt.comptimePrint(
                 "Kick/rotation system to use. For kick systems that have a 180-less and 180 variant, the 180-less variant has no 180 rotations. The 180 variant has 180 rotations but no 180 kicks. " ++
-                    enumValuesHelp(FumenArgs, KicksOption) ++
+                    enumValuesHelp(KicksOption) ++
                     " (default: {s})",
                 .{@tagName((FumenArgs{}).kicks)},
             ),
             .@"min-height" = "Overrides the minimum height of the PC to find.",
             .nn = "The path to the neural network to use for the solver. The path may be absolute, relative to the current working directory, or relative to the executable's directory. If not provided, a default built-in NN will be used.",
             .save = "The piece type to save in the hold slot by the end of the perfect clear. This option is not case-sensitive. If not specified, any piece may go into the hold slot. " ++
-                enumValuesHelp(FumenArgs, PieceKind),
+                enumValuesHelp(PieceKind),
             .@"output-type" = std.fmt.comptimePrint(
                 "The type of fumen to output. Overwrites the input fumen's type even when append is true. " ++
-                    enumValuesHelp(FumenArgs, OutputMode) ++
+                    enumValuesHelp(OutputMode) ++
                     " (default: {s})",
                 .{@tagName((FumenArgs{}).@"output-type")},
             ),

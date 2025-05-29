@@ -32,10 +32,7 @@ var load_default_nn = std.once((struct {
         default_nn = loadNNFromStr(
             fba.allocator(),
             @embedFile("nn_4l_json"),
-        ) catch |e| switch (e) {
-            error.OutOfMemory => @panic("Out of memory"),
-            else => @panic("Invalid JSON"),
-        };
+        ) catch unreachable;
     }
 }).load);
 pub fn defaultNN(allocator: Allocator) !NN {
@@ -188,6 +185,8 @@ pub const PCSolution = struct {
 pub const FindPcError = error{
     ImpossibleSaveHold,
     NoPcExists,
+    OutOfMemory,
+    Overflow,
     SolutionTooLong,
 };
 
@@ -255,7 +254,7 @@ pub fn findPcAuto(
     min_height: u7,
     max_len: usize,
     save_hold: ?PieceKind,
-) ![]Placement {
+) FindPcError![]Placement {
     const placements = try allocator.alloc(Placement, max_len);
     errdefer allocator.free(placements);
     const height = @max(

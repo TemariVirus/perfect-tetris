@@ -106,7 +106,7 @@ const FumenBlock = enum(u8) {
         };
     }
 
-    pub fn toPieceKind(self: FumenBlock) PieceKind {
+    pub fn toPieceKind(self: FumenBlock) error{Invalid}!PieceKind {
         return switch (self) {
             .i => .i,
             .l => .l,
@@ -115,7 +115,7 @@ const FumenBlock = enum(u8) {
             .t => .t,
             .j => .j,
             .s => .s,
-            else => @panic("Invalid conversion"),
+            else => return error.Invalid,
         };
     }
 
@@ -504,7 +504,7 @@ fn readPieceAndFlags(self: *FumenReader) FumenError!struct {
         else
             Piece{
                 .facing = rotation.toEngine(),
-                .kind = block.toPieceKind(),
+                .kind = block.toPieceKind() catch @panic("Invalid empty piece"),
             };
     };
 

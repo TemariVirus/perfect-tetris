@@ -32,7 +32,7 @@ pub fn findPc(
     min_height: u7,
     placements: []Placement,
     save_hold: ?PieceKind,
-) ![]Placement {
+) FindPcError![]Placement {
     var arena: std.heap.ArenaAllocator = .init(allocator);
     defer arena.deinit();
     const arena_allocator = arena.allocator();
@@ -148,14 +148,14 @@ fn findPcInner(
 
     // Add moves to queue
     queues[0].items.len = 0;
-    const m1 = movegen.allPlacements(
+    const m1 = try movegen.allPlacements(
         playfield,
         do_o_rotations,
         kicks,
         pieces[0],
         max_height,
     );
-    movegen.orderMoves(
+    try movegen.orderMoves(
         &queues[0],
         playfield,
         pieces[0],
@@ -167,14 +167,14 @@ fn findPcInner(
     );
     // Check for unique hold
     if (can_hold and pieces.len > 1 and pieces[0] != pieces[1]) {
-        const m2 = movegen.allPlacements(
+        const m2 = try movegen.allPlacements(
             playfield,
             do_o_rotations,
             kicks,
             pieces[1],
             max_height,
         );
-        movegen.orderMoves(
+        try movegen.orderMoves(
             &queues[0],
             playfield,
             pieces[1],

@@ -36,8 +36,8 @@ pub fn allPlacements(
     kicks: *const KickFn,
     piece_kind: PieceKind,
     max_height: u7,
-) PiecePosSet {
-    return root.movegen.allPlacementsRaw(
+) error{Overflow}!PiecePosSet {
+    return try root.movegen.allPlacementsRaw(
         PiecePosSet,
         PiecePosition,
         PlacementStack,
@@ -73,7 +73,7 @@ pub fn orderMoves(
     comptime validFn: fn ([]const u16) bool,
     nn: NN,
     comptime scoreFn: fn ([]const u16, NN) f32,
-) void {
+) error{OutOfMemory}!void {
     var iter = moves.iterator(piece);
     while (iter.next()) |placement| {
         var board = playfield;
@@ -84,13 +84,13 @@ pub fn orderMoves(
             continue;
         }
 
-        queue.add(.{
+        try queue.add(.{
             .placement = placement,
             .score = scoreFn(
                 board.rows[0..@min(BoardMask.HEIGHT, new_height)],
                 nn,
             ),
-        }) catch @panic("Out of memory");
+        });
     }
 }
 
