@@ -19,8 +19,12 @@ const Placement = root.Placement;
 
 const PiecePosSet = @import("../PiecePosSet.zig").PiecePosSet(.{ 10, 24, 4 });
 
-// 200 cells * 4 rotations = 800 intermediate placements at most
-const PlacementStack = std.BoundedArray(PiecePosition, 800);
+// Every intermediate placement needs a previous placement, so the maximum stack
+// size is `PiecePosSet.len * moves.len / (moves.len + 1)`
+const PlacementStack = std.BoundedArray(
+    PiecePosition,
+    PiecePosSet.len * Move.moves.len / (Move.moves.len + 1),
+);
 const PiecePosition = packed struct {
     y: i8,
     x: i6,

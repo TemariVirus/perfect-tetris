@@ -276,7 +276,7 @@ pub fn findPcAuto(
             placements,
             save_hold,
         )) |solution| {
-            return try shrinkMemory(Placement, allocator, placements, solution.len);
+            return try allocator.realloc(placements, solution.len);
         } else |e| if (e != FindPcError.SolutionTooLong) {
             return e;
         }
@@ -291,7 +291,7 @@ pub fn findPcAuto(
         placements,
         save_hold,
     );
-    return try shrinkMemory(Placement, allocator, placements, solution.len);
+    return try allocator.realloc(placements, solution.len);
 }
 
 pub fn loadNNFromStr(allocator: Allocator, json_str: []const u8) !NN {
@@ -309,22 +309,6 @@ pub fn loadNNFromStr(allocator: Allocator, json_str: []const u8) !NN {
         .net = _nn,
         .inputs_used = inputs_used,
     };
-}
-
-fn shrinkMemory(
-    comptime T: type,
-    allocator: Allocator,
-    mem: []T,
-    new_len: usize,
-) Allocator.Error![]T {
-    assert(new_len <= mem.len);
-    if (allocator.remap(mem, new_len)) |new_mem| {
-        return new_mem;
-    }
-    const new_mem = try allocator.alloc(Placement, new_len);
-    @memcpy(new_mem, mem[0..new_len]);
-    allocator.free(mem);
-    return new_mem;
 }
 
 test {

@@ -15,7 +15,7 @@ pub fn PiecePosSet(shape: [3]usize) type {
         pub const width: usize = shape[0];
         pub const height: usize = shape[1];
         pub const depth: usize = shape[2];
-        const len = width * height * depth;
+        pub const len = width * height * depth;
         const BackingSet = std.StaticBitSet(len);
         const Self = @This();
 
