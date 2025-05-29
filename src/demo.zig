@@ -1,3 +1,5 @@
+// TODO: Use pathfinding to better animate the PCs
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const SolutionList = std.ArrayList([]Placement);

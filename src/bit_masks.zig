@@ -159,6 +159,27 @@ pub const PieceMask = struct {
         return .{ .mask = mask };
     }
 
+    /// Returns `true` if the 4 minos of `self` and `other` are in the same positions;
+    /// otherwise, `false`.
+    pub fn minosEqual(
+        self: PieceMask,
+        self_pos: Position,
+        other: PieceMask,
+        other_pos: Position,
+    ) bool {
+        assert(@popCount(self.mask) == 4 and @popCount(other.mask) == 4);
+
+        const self_offset = self_pos.y * WIDTH - self_pos.x;
+        const other_offset = other_pos.y * WIDTH - other_pos.x;
+        const offset = self_offset - other_offset;
+        // 64 bits - 4 minos = 60 is the maximum offset that can return true
+        if (@abs(offset) > 60) {
+            return false;
+        }
+
+        return std.math.shr(u64, self.mask, offset) == other.mask;
+    }
+
     fn makeAttributeTable(
         comptime T: type,
         comptime attribute: fn (Piece) T,

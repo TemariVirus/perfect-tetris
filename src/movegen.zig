@@ -25,7 +25,7 @@ const PlacementStack = std.BoundedArray(
     PiecePosition,
     PiecePosSet.len * Move.moves.len / (Move.moves.len + 1),
 );
-const PiecePosition = packed struct {
+pub const PiecePosition = packed struct {
     y: i8,
     x: i6,
     facing: Facing,
@@ -107,7 +107,7 @@ pub fn Intermediate(comptime TPiecePosSet: type) type {
 
         /// Returns `true` if the piece would collide with the playfield at the
         /// given position. Otherwise, `false`.
-        fn collides(self: Self, piece: Piece, pos: Position) bool {
+        pub fn collides(self: Self, piece: Piece, pos: Position) bool {
             // Out of bounds
             if (pos.x > piece.maxX() or
                 pos.x < piece.minX() or
@@ -123,7 +123,7 @@ pub fn Intermediate(comptime TPiecePosSet: type) type {
         }
 
         /// Returns `true` if the piece was successfully transposed. Otherwise, `false`.
-        fn tryTranspose(self: *Self, pos: Position) bool {
+        pub fn tryTranspose(self: *Self, pos: Position) bool {
             if (self.collides(self.current, pos)) {
                 return false;
             }
@@ -132,7 +132,7 @@ pub fn Intermediate(comptime TPiecePosSet: type) type {
         }
 
         /// Returns `true` if the piece was successfully rotated. Otherwise, `false`.
-        fn tryRotate(self: *Self, rotation: Rotation) bool {
+        pub fn tryRotate(self: *Self, rotation: Rotation) bool {
             if (self.current.kind == .o and !self.do_o_rotations) {
                 return false;
             }
@@ -166,7 +166,7 @@ pub fn Intermediate(comptime TPiecePosSet: type) type {
 
 /// Returns the set of all placements where the piece collides with the playfield.
 /// Assumes that no cells in the playfield are higher than `max_height`.
-fn collisionSet(
+pub fn collisionSet(
     comptime TPiecePosSet: type,
     comptime TBoardMask: type,
     playfield: TBoardMask,

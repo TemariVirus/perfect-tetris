@@ -2,6 +2,7 @@ pub const bit_masks = @import("bit_masks.zig");
 pub const movegen = @import("movegen.zig");
 pub const movegen_slow = @import("slow/movegen.zig");
 pub const next = @import("next.zig");
+pub const pathfind = @import("pathfind.zig");
 pub const pc = @import("pc.zig");
 pub const pc_slow = @import("slow/pc.zig");
 
@@ -310,6 +311,10 @@ pub fn loadNNFromStr(allocator: Allocator, json_str: []const u8) !NN {
         .inputs_used = inputs_used,
     };
 }
+
+// Needed for tests to be reachable
+const PiecePosSet = @import("PiecePosSet.zig");
+const ring_queue = @import("ring_queue.zig");
 
 test {
     std.testing.refAllDecls(@This());

@@ -15,6 +15,7 @@ const Rotation = engine.kicks.Rotation;
 const root = @import("../root.zig");
 const NN = root.NN;
 const Move = root.movegen.Move;
+const PiecePosition = root.movegen.PiecePosition;
 const Placement = root.Placement;
 
 const PiecePosSet = @import("../PiecePosSet.zig").PiecePosSet(.{ 10, 24, 4 });
@@ -25,26 +26,6 @@ const PlacementStack = std.BoundedArray(
     PiecePosition,
     PiecePosSet.len * Move.moves.len / (Move.moves.len + 1),
 );
-const PiecePosition = packed struct {
-    y: i8,
-    x: i6,
-    facing: Facing,
-
-    pub fn pack(piece: Piece, pos: Position) PiecePosition {
-        return PiecePosition{
-            .y = pos.y,
-            .x = @intCast(pos.x),
-            .facing = piece.facing,
-        };
-    }
-
-    pub fn unpack(self: PiecePosition, piece_kind: PieceKind) Placement {
-        return .{
-            .piece = .{ .kind = piece_kind, .facing = self.facing },
-            .pos = .{ .y = self.y, .x = self.x },
-        };
-    }
-};
 
 /// Returns the set of all placements where the top of the piece does not
 /// exceed `max_height`. Assumes that no cells in the playfield are higher than

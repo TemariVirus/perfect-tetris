@@ -106,3 +106,41 @@ pub fn PiecePosSet(shape: [3]usize) type {
         }
     };
 }
+
+/// A map of combinations of pieces and their positions, to values of type `T`,
+/// within certain bounds as defined by `shape`.
+pub fn PiecePosMap(shape: [3]usize, T: type) type {
+    const Set = PiecePosSet(shape);
+    return struct {
+        pub const width = Set.width;
+        pub const height = Set.height;
+        pub const depth = Set.depth;
+        pub const len = Set.len;
+        const Self = @This();
+
+        data: [len]T,
+
+        /// Converts a piece and position to an index into the data array.
+        pub fn flatIndex(piece: Piece, pos: Position) usize {
+            return PiecePosSet(shape).flatIndex(piece, pos);
+        }
+
+        /// Converts an index into the data array to it's coressponding
+        /// piece and position.
+        pub fn reverseIndex(piece_kind: PieceKind, index: usize) Placement {
+            return PiecePosSet(shape).reverseIndex(piece_kind, index);
+        }
+
+        /// Returns the value associated with the given piece-position combination.
+        pub fn get(self: Self, piece: Piece, pos: Position) T {
+            const index = Self.flatIndex(piece, pos);
+            return self.data[index];
+        }
+
+        /// Sets the value associated with the given piece-position combination.
+        pub fn put(self: *Self, piece: Piece, pos: Position, value: T) void {
+            const index = Self.flatIndex(piece, pos);
+            self.data[index] = value;
+        }
+    };
+}
