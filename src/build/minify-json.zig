@@ -11,7 +11,6 @@ pub fn main() !void {
 
     _ = args.next().?; // Executable path
     const path = args.next() orelse return error.MissingJsonPath;
-    const output_path = args.next() orelse return error.MissingOutputPath;
 
     const file = try std.fs.openFileAbsolute(path, .{});
     defer file.close();
@@ -26,11 +25,7 @@ pub fn main() !void {
         .{ .max_value_len = 1_000_000 },
     );
 
-    const output_file = try std.fs.cwd().createFile(output_path, .{});
-    defer output_file.close();
-    var writer = json.writeStream(
-        output_file.writer(),
-        .{ .whitespace = .minified },
-    );
+    const stdout = std.io.getStdOut().writer();
+    var writer = json.writeStream(stdout, .{ .whitespace = .minified });
     try value.jsonStringify(&writer);
 }

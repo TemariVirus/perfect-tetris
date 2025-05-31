@@ -5,96 +5,58 @@ pub fn build(b: *Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // Engine dependency
-    const engine_module = b.dependency("engine", .{
-        .target = target,
-        .optimize = optimize,
-    }).module("engine");
-
-    // vaxis dependency
-    const vaxis_module = b.dependency("vaxis", .{
-        .target = target,
-        .optimize = optimize,
-    }).module("vaxis");
-
-    // zmai dependency
-    const zmai_module = b.dependency("zmai", .{
-        .target = target,
-        .optimize = optimize,
-    }).module("zmai");
-
-    // zig-args dependency
-    const args_module = b.dependency("args", .{
-        .target = target,
-        .optimize = optimize,
-    }).module("args");
-
     // Expose the library root
-    const root_module = b.addModule("perfect-tetris", .{
-        .root_source_file = b.path("src/root.zig"),
-        .imports = &.{
-            .{ .name = "engine", .module = engine_module },
-            .{
-                .name = "nterm",
-                .module = engine_module.import_table.get("nterm").?,
-            },
-            .{ .name = "vaxis", .module = vaxis_module },
-            .{ .name = "zmai", .module = zmai_module },
-        },
-    });
+    const root_module = libModule(b, target, optimize);
+    b.modules.put(b.dupe("perfect-tetris"), root_module) catch @panic("OOM");
 
-    // Add NN files
-    const install_NNs = b.addInstallDirectory(.{
-        .source_dir = b.path("NNs"),
-        .install_dir = .bin,
-        .install_subdir = "NNs",
-    });
-    root_module.addAnonymousImport("nn_4l_json", .{
-        .root_source_file = minifyJson(
-            b,
-            b.path("NNs/Fast3.json"),
-            "nn_4l.json",
-        ),
-    });
+    // Install step
+    const exe = pcExecutable(b, "pc", target, optimize);
+    b.installArtifact(exe);
 
-    buildExe(b, target, optimize, root_module, args_module);
-    buildSolve(b, target, optimize, root_module, install_NNs);
-    buildTests(b, root_module);
-    buildBench(b, target, root_module);
-    buildTrain(b, target, optimize, root_module);
+    runStep(b, exe);
+    solveStep(b, target, optimize);
+    testStep(b, target);
+    benchStep(b, target);
+    trainStep(b, target, optimize);
+    releaseStep(b);
 }
 
-fn minifyJson(
-    b: *Build,
-    path: Build.LazyPath,
-    name: []const u8,
-) Build.LazyPath {
-    const minify_exe = b.addExecutable(.{
-        .name = "minify-json",
-        .root_source_file = b.path("src/build/minify-json.zig"),
-        .target = b.resolveTargetQuery(
-            Build.parseTargetQuery(.{}) catch
-                @panic("minifyJson: Failed to resolve target"),
-        ),
-    });
+const Dependency = enum {
+    args,
+    engine,
+    nterm,
+    vaxis,
+    zmai,
 
-    const minify_cmd = b.addRunArtifact(minify_exe);
-    minify_cmd.expectExitCode(0);
-    minify_cmd.addFileArg(path);
-    return minify_cmd.addOutputFileArg(name);
-}
+    pub fn module(dep: Dependency, b: *Build, args: anytype) *Build.Module {
+        return switch (dep) {
+            .nterm => module(.engine, b, args).import_table.get("nterm").?,
+            else => b.dependency(@tagName(dep), args).module(@tagName(dep)),
+        };
+    }
+};
 
-fn stripModuleRecursive(module: *Build.Module) void {
-    module.strip = true;
-    var iter = module.import_table.iterator();
-    while (iter.next()) |entry| {
-        stripModuleRecursive(entry.value_ptr.*);
+fn importDependencies(
+    module: *Build.Module,
+    deps: []const Dependency,
+    target: Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) void {
+    for (deps) |dep| {
+        const dep_module = dep.module(module.owner, .{
+            .target = target,
+            .optimize = optimize,
+        });
+        module.addImport(switch (dep) {
+            .args => "zig-args",
+            else => @tagName(dep),
+        }, dep_module);
     }
 }
 
 fn packageVersion(b: *Build) []const u8 {
     var ast = std.zig.Ast.parse(b.allocator, @embedFile("build.zig.zon"), .zon) catch
-        @panic("Out of memory");
+        @panic("OOM");
     defer ast.deinit(b.allocator);
 
     var buf: [2]std.zig.Ast.Node.Index = undefined;
@@ -112,171 +74,212 @@ fn packageVersion(b: *Build) []const u8 {
     @panic("Field 'version' missing from build.zig.zon");
 }
 
-fn buildExe(
+fn minifyJson(b: *Build, path: Build.LazyPath) Build.LazyPath {
+    const minify_exe = b.addExecutable(.{
+        .name = "minify-json",
+        .root_source_file = b.path("src/build/minify-json.zig"),
+        .target = b.resolveTargetQuery(
+            Build.parseTargetQuery(.{ .arch_os_abi = "native" }) catch unreachable,
+        ),
+    });
+
+    const minify_cmd = b.addRunArtifact(minify_exe);
+    minify_cmd.expectExitCode(0);
+    minify_cmd.addFileArg(path);
+    return minify_cmd.captureStdOut();
+}
+
+fn hashFiles(b: *Build, files: []const Build.LazyPath) Build.LazyPath {
+    const hash_exe = b.addExecutable(.{
+        .name = "hash-files",
+        .root_source_file = b.path("src/build/hash-files.zig"),
+        .target = b.resolveTargetQuery(
+            Build.parseTargetQuery(.{ .arch_os_abi = "native" }) catch unreachable,
+        ),
+    });
+
+    const hash_cmd = b.addRunArtifact(hash_exe);
+    hash_cmd.expectExitCode(0);
+    for (files) |file| {
+        hash_cmd.addFileArg(file);
+    }
+    return hash_cmd.captureStdOut();
+}
+
+fn libModule(
     b: *Build,
     target: Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
-    root_module: *Build.Module,
-    args_module: *Build.Module,
-) void {
+) *Build.Module {
+    const mod = b.createModule(.{ .root_source_file = b.path("src/root.zig") });
+    importDependencies(mod, &.{ .engine, .zmai }, target, optimize);
+    mod.addAnonymousImport("nn_4l_json", .{
+        .root_source_file = minifyJson(b, b.path("NNs/Fast3.json")),
+    });
+    return mod;
+}
+
+fn pcExecutable(
+    b: *Build,
+    name: []const u8,
+    target: Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) *Build.Step.Compile {
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
-    exe_mod.addImport("perfect-tetris", root_module);
-    exe_mod.addImport("zig-args", args_module);
-    exe_mod.addImport(
-        "engine",
-        root_module.import_table.get("engine").?,
-    );
-    exe_mod.addImport(
-        "vaxis",
-        root_module.import_table.get("vaxis").?,
-    );
-    exe_mod.addImport(
-        "nterm",
-        root_module.import_table.get("nterm").?,
-    );
-    exe_mod.addImport(
-        "zmai",
-        root_module.import_table.get("zmai").?,
+    exe_mod.addImport("perfect-tetris", libModule(b, target, optimize));
+    importDependencies(
+        exe_mod,
+        &.{ .args, .engine, .nterm, .vaxis, .zmai },
+        target,
+        optimize,
     );
 
     const options = b.addOptions();
     options.addOption([]const u8, "version", packageVersion(b));
     exe_mod.addImport("build", options.createModule());
 
-    if (b.option(bool, "strip", "Strip executable binary") orelse false) {
-        stripModuleRecursive(exe_mod);
-    }
+    return b.addExecutable(.{ .name = name, .root_module = exe_mod });
+}
 
-    const exe = b.addExecutable(.{
-        .name = "pc",
-        .root_module = exe_mod,
-    });
-    b.installArtifact(exe);
-
+fn runStep(b: *Build, exe: *Build.Step.Compile) void {
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| {
         run_cmd.addArgs(args);
     }
-    const run_step = b.step("run", "Run the app");
-    run_step.dependOn(&run_cmd.step);
+    const step = b.step("run", "Run the app");
+    step.dependOn(&run_cmd.step);
 }
 
-fn buildSolve(
+fn solveStep(
     b: *Build,
     target: Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
-    root_module: *Build.Module,
-    install_NNs: *Build.Step.InstallDir,
 ) void {
-    const exe = b.addExecutable(.{
-        .name = "solve",
+    const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/scripts/solve.zig"),
         .target = target,
         .optimize = optimize,
     });
-    exe.root_module.addImport("perfect-tetris", root_module);
-    exe.root_module.addImport(
-        "engine",
-        root_module.import_table.get("engine").?,
-    );
+    exe_mod.addImport("perfect-tetris", libModule(b, target, optimize));
+    importDependencies(exe_mod, &.{.engine}, target, optimize);
+
+    const exe = b.addExecutable(.{ .name = "solve", .root_module = exe_mod });
+
+    const install_NNs = b.addInstallDirectory(.{
+        .source_dir = b.path("NNs"),
+        .install_dir = .bin,
+        .install_subdir = "NNs",
+    });
 
     const run_cmd = b.addRunArtifact(exe);
-    run_cmd.step.dependOn(b.getInstallStep());
-    const run_step = b.step("solve", "Run the PC solver");
-    run_step.dependOn(&run_cmd.step);
-
     const install = b.addInstallArtifact(exe, .{});
-    run_step.dependOn(&install.step);
     install.step.dependOn(&install_NNs.step);
+
+    const step = b.step("solve", "Run the PC solver");
+    step.dependOn(&run_cmd.step);
+    step.dependOn(&install.step);
 }
 
-fn buildTests(b: *Build, root_module: *Build.Module) void {
+fn testStep(b: *Build, target: Build.ResolvedTarget) void {
+    const lib = libModule(b, target, .Debug);
     const lib_tests = b.addTest(.{
-        .root_source_file = b.path("src/root.zig"),
+        .root_module = b.createModule(.{
+            .root_source_file = lib.root_source_file,
+            .target = target,
+            .optimize = .Debug,
+        }),
     });
-    lib_tests.root_module.addImport(
-        "nn_4l_json",
-        root_module.import_table.get("nn_4l_json").?,
-    );
-    lib_tests.root_module.addImport(
-        "engine",
-        root_module.import_table.get("engine").?,
-    );
-    lib_tests.root_module.addImport(
-        "zmai",
-        root_module.import_table.get("zmai").?,
-    );
+    lib_tests.root_module.import_table =
+        lib.import_table.clone(b.allocator) catch @panic("OOM");
 
     const run_lib_tests = b.addRunArtifact(lib_tests);
-    const test_step = b.step("test", "Run library tests");
-    test_step.dependOn(&run_lib_tests.step);
+    const step = b.step("test", "Run library tests");
+    step.dependOn(&run_lib_tests.step);
 }
 
-fn buildBench(
-    b: *Build,
-    target: Build.ResolvedTarget,
-    root_module: *Build.Module,
-) void {
-    const bench_exe = b.addExecutable(.{
-        .name = "benchmarks",
+fn benchStep(b: *Build, target: Build.ResolvedTarget) void {
+    const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/scripts/bench.zig"),
         .target = target,
         .optimize = .ReleaseFast,
     });
-    bench_exe.root_module.addImport("perfect-tetris", root_module);
-    bench_exe.root_module.addImport(
-        "engine",
-        root_module.import_table.get("engine").?,
-    );
+    exe_mod.addImport("perfect-tetris", libModule(b, target, .ReleaseFast));
+    importDependencies(exe_mod, &.{.engine}, target, .ReleaseFast);
 
-    const bench_cmd = b.addRunArtifact(bench_exe);
-    bench_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| {
-        bench_cmd.addArgs(args);
-    }
-    const bench_step = b.step("bench", "Run benchmarks");
-    bench_step.dependOn(&bench_cmd.step);
+    const exe = b.addExecutable(.{ .name = "benchmarks", .root_module = exe_mod });
+
+    const run_cmd = b.addRunArtifact(exe);
+    const install = b.addInstallArtifact(exe, .{});
+
+    const step = b.step("bench", "Run benchmarks");
+    step.dependOn(&run_cmd.step);
+    step.dependOn(&install.step);
 }
 
-fn buildTrain(
+fn trainStep(
     b: *Build,
     target: Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
-    root_module: *Build.Module,
 ) void {
-    const train_exe = b.addExecutable(.{
-        .name = "nn-train",
+    const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/scripts/train.zig"),
         .target = target,
         .optimize = optimize,
     });
-    train_exe.root_module.addImport("perfect-tetris", root_module);
-    train_exe.root_module.addImport(
-        "engine",
-        root_module.import_table.get("engine").?,
-    );
-    train_exe.root_module.addImport(
-        "nterm",
-        root_module.import_table.get("nterm").?,
-    );
-    train_exe.root_module.addImport(
-        "zmai",
-        root_module.import_table.get("zmai").?,
-    );
+    exe_mod.addImport("perfect-tetris", libModule(b, target, optimize));
+    importDependencies(exe_mod, &.{ .engine, .nterm, .zmai }, target, optimize);
 
-    const train_cmd = b.addRunArtifact(train_exe);
-    train_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| {
-        train_cmd.addArgs(args);
+    const exe = b.addExecutable(.{ .name = "nn-train", .root_module = exe_mod });
+
+    const run_cmd = b.addRunArtifact(exe);
+    const install = b.addInstallArtifact(exe, .{});
+
+    const step = b.step("train", "Train neural networks");
+    step.dependOn(&run_cmd.step);
+    step.dependOn(&install.step);
+}
+
+fn releaseStep(b: *Build) void {
+    const step = b.step("release", "Build release binaries");
+
+    var files: std.ArrayList(Build.LazyPath) = .init(b.allocator);
+    defer files.deinit();
+
+    inline for (.{
+        .{ .triple = "x86_64-linux", .cpu = "x86_64" },
+        .{ .triple = "x86_64-windows", .cpu = "x86_64" },
+        .{ .triple = "x86_64-linux", .cpu = "x86_64_v3" },
+        .{ .triple = "x86_64-windows", .cpu = "x86_64_v3" },
+    }) |target| {
+        const resolved_target = b.resolveTargetQuery(Build.parseTargetQuery(.{
+            .arch_os_abi = target.triple,
+            .cpu_features = target.cpu,
+        }) catch unreachable);
+
+        var triple_parts = std.mem.splitScalar(u8, target.triple, '-');
+        _ = triple_parts.next();
+        const name = std.fmt.allocPrint(b.allocator, "pc-{s}-{s}", .{
+            target.cpu,
+            triple_parts.next().?,
+        }) catch @panic("OOM");
+        defer b.allocator.free(name);
+
+        const exe = pcExecutable(b, name, resolved_target, .ReleaseFast);
+        exe.root_module.strip = true;
+        const install = b.addInstallArtifact(exe, .{
+            .dest_dir = .{ .override = .{ .custom = "release" } },
+            .pdb_dir = .disabled,
+        });
+        step.dependOn(&install.step);
+
+        files.append(exe.getEmittedBin()) catch @panic("OOM");
     }
-    const train_step = b.step("train", "Train neural networks");
-    train_step.dependOn(&train_cmd.step);
 
-    const install = b.addInstallArtifact(train_exe, .{});
-    train_step.dependOn(&install.step);
+    const checksums = b.addInstallFile(hashFiles(b, files.items), "release/sha256.txt");
+    step.dependOn(&checksums.step);
 }
