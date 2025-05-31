@@ -202,7 +202,7 @@ fn findPcInner(
 
     // Add moves to queue
     queues[0].items.len = 0;
-    const m1 = try movegen.allPlacements(
+    const m1 = movegen.allPlacements(
         playfield,
         do_o_rotations,
         kicks,
@@ -222,7 +222,7 @@ fn findPcInner(
     );
     // Check for unique hold
     if (can_hold and pieces.len > 1 and pieces[0] != pieces[1]) {
-        const m2 = try movegen.allPlacements(
+        const m2 = movegen.allPlacements(
             playfield,
             do_o_rotations,
             kicks,

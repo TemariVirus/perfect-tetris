@@ -211,8 +211,8 @@ pub fn allPlacements(
     kicks: *const KickFn,
     piece_kind: PieceKind,
     max_height: u6,
-) error{Overflow}!PiecePosSet {
-    return try allPlacementsRaw(
+) PiecePosSet {
+    return allPlacementsRaw(
         PiecePosSet,
         PiecePosition,
         PlacementStack,
@@ -235,7 +235,7 @@ pub fn allPlacementsRaw(
     kicks: *const KickFn,
     piece_kind: PieceKind,
     max_height: u7,
-) error{Overflow}!TPiecePosSet {
+) TPiecePosSet {
     var seen: TPiecePosSet = .init();
     var placements: TPiecePosSet = .init();
     var stack = TPlacementStack.init(0) catch unreachable;
@@ -260,10 +260,10 @@ pub fn allPlacementsRaw(
 
         var x = piece.minX();
         while (x <= piece.maxX()) : (x += 1) {
-            try stack.append(TPiecePosition.pack(piece, .{
+            stack.append(TPiecePosition.pack(piece, .{
                 .x = x,
                 .y = @as(i8, max_height) + piece.minY(),
-            }));
+            })) catch unreachable;
         }
     }
 
@@ -297,9 +297,9 @@ pub fn allPlacementsRaw(
             }
 
             // Branch out after movement
-            try stack.append(
+            stack.append(
                 TPiecePosition.pack(new_game.current, new_game.pos),
-            );
+            ) catch unreachable;
 
             // Skip this placement if the piece is too high, or if it's not on
             // the ground

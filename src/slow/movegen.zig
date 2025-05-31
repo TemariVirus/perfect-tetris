@@ -36,8 +36,8 @@ pub fn allPlacements(
     kicks: *const KickFn,
     piece_kind: PieceKind,
     max_height: u7,
-) error{Overflow}!PiecePosSet {
-    return try root.movegen.allPlacementsRaw(
+) PiecePosSet {
+    return root.movegen.allPlacementsRaw(
         PiecePosSet,
         PiecePosition,
         PlacementStack,
