@@ -169,8 +169,8 @@ pub const PieceMask = struct {
     ) bool {
         assert(@popCount(self.mask) == 4 and @popCount(other.mask) == 4);
 
-        const self_offset = self_pos.y * WIDTH - self_pos.x;
-        const other_offset = other_pos.y * WIDTH - other_pos.x;
+        const self_offset = @as(i16, self_pos.y) * WIDTH - @as(i16, self_pos.x);
+        const other_offset = @as(i16, other_pos.y) * WIDTH - @as(i16, other_pos.x);
         const offset = self_offset - other_offset;
         // 64 bits - 4 minos = 60 is the maximum offset that can return true
         if (@abs(offset) > 60) {

@@ -23,8 +23,9 @@ const PlacementQueue = @import("ring_queue.zig").RingQueue(PiecePosition);
 // 240 cells * 4 rotations - 1 = 959 moves at most
 pub const Path = std.BoundedArray(Move, 959);
 
-/// Finds the shortest sequence of moves that brings a piece from `from` to `to`,
-/// or to a position that is visually indistinguishable from `to`.
+/// Finds the sequence of moves with the least key presses that brings a piece from
+/// `from` to `to`, or to a position that is visually indistinguishable from `to`.
+/// Consecutive drops are considered a single key press.
 /// Returns `null` if no path exists. Asserts that `from.piece.kind == to.piece.kind`.
 pub fn pathfind(
     playfield: BoardMask,
@@ -38,9 +39,7 @@ pub fn pathfind(
     const height = playfield.height();
 
     var distances: DistanceMap = .{ .data = @splat(std.math.maxInt(u16)) };
-    // Every intermediate placement needs a previous placement, so the maximum queue
-    // size is `CollisionSet.len * moves.len / (moves.len + 1)`
-    var queue_buf: [CollisionSet.len * Move.moves.len / (Move.moves.len + 1)]PiecePosition = undefined;
+    var queue_buf: [CollisionSet.len]PiecePosition = undefined;
     var queue: PlacementQueue = .{ .data = &queue_buf };
     const collision_set = collisionSet(
         CollisionSet,
@@ -62,9 +61,6 @@ pub fn pathfind(
         const distance = distances.get(piece, pos) + 1;
 
         for (Move.moves) |move| {
-            // TODO: Don't count drops towards distance (or only count first drop)?
-            // Will need to replace ring queue with priority queue
-            // const distance = if (move == .drop) old_distance else old_distance + 1;
             var new_game: Intermediate = .{
                 .collision_set = &collision_set,
                 .current = piece,
@@ -74,27 +70,37 @@ pub fn pathfind(
                 .kicks = kicks,
             };
 
-            // Skip if piece was unable to move
-            if (!new_game.makeMove(move)) {
-                continue;
-            }
+            while (true) {
+                // Skip if piece was unable to move
+                if (!new_game.makeMove(move)) {
+                    break;
+                }
 
-            // Stop if we reached the target
-            if (PieceMask.minosEqual(.from(to.piece), to.pos, .from(new_game.current), new_game.pos)) {
+                // Stop if we reached the target
+                if (PieceMask.minosEqual(.from(to.piece), to.pos, .from(new_game.current), new_game.pos)) {
+                    distances.put(new_game.current, new_game.pos, distance);
+                    break :outer .{ .piece = new_game.current, .pos = new_game.pos };
+                }
+
+                // Skip if the piece is too high or if the distance is higher than previously found
+                if (new_game.pos.y - new_game.current.minY() >= DistanceMap.height or
+                    distances.get(new_game.current, new_game.pos) <= distance)
+                {
+                    switch (move) {
+                        .drop => continue,
+                        else => break,
+                    }
+                }
+
+                // Branch out after movement
                 distances.put(new_game.current, new_game.pos, distance);
-                break :outer .{ .piece = new_game.current, .pos = new_game.pos };
-            }
+                queue.enqueue(.pack(new_game.current, new_game.pos)) catch unreachable;
 
-            // Skip if the piece is too high or if the distance is higher than previously found
-            if (new_game.pos.y - new_game.current.minY() >= DistanceMap.height or
-                distances.get(new_game.current, new_game.pos) <= distance)
-            {
-                continue;
+                // Keep dropping as it's still a single key press
+                if (move != .drop) {
+                    break;
+                }
             }
-
-            // Branch out after movement
-            distances.put(new_game.current, new_game.pos, distance);
-            queue.enqueue(.pack(new_game.current, new_game.pos)) catch unreachable;
         }
     } else {
         return null;
@@ -112,11 +118,15 @@ pub fn pathfind(
     };
     while (game.current != from.piece or game.pos != from.pos) {
         const old_distance = distances.get(game.current, game.pos);
-        for (Move.moves) |move| {
+        var moves_it = std.mem.reverseIterator(Move.moves);
+        while (moves_it.next()) |move| {
             if (!unmakeMove(&game, move, distances)) {
                 continue;
             }
-            if (old_distance > distances.get(game.current, game.pos)) {
+            if (old_distance - 1 == distances.get(game.current, game.pos) or
+                // Drops are allowed to add 0 distance
+                (move == .drop and old_distance == distances.get(game.current, game.pos)))
+            {
                 path.append(move) catch unreachable;
                 break;
             }
