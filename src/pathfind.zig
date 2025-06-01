@@ -94,7 +94,10 @@ pub fn pathfind(
 
                 // Branch out after movement
                 distances.put(new_game.current, new_game.pos, distance);
-                queue.enqueue(.pack(new_game.current, new_game.pos)) catch unreachable;
+                // Only branch out when dropping if we are inside or just above the playfield
+                if (move != .drop or new_game.pos.y <= @as(i8, height) + piece.minY()) {
+                    queue.enqueue(.pack(new_game.current, new_game.pos)) catch unreachable;
+                }
 
                 // Keep dropping as it's still a single key press
                 if (move != .drop) {

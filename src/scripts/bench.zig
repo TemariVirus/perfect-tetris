@@ -33,8 +33,8 @@ pub fn main() !void {
     // Max memory usage:  2.430MiB
     try pcBenchmark(6, "NNs/Fast3.json", false);
 
-    // Mean: 27.526us ± 22.303us
-    // Max:  128.2us
+    // Mean: 7.88us ± 5.247us
+    // Max:  41.9us
     try pathfindBenchmark();
 
     // Mean: 43ns
