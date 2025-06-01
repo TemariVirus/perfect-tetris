@@ -177,7 +177,7 @@ pub const PieceMask = struct {
             return false;
         }
 
-        return std.math.shr(u64, self.mask, offset) == other.mask;
+        return std.math.shl(u64, self.mask, offset) == other.mask;
     }
 
     fn makeAttributeTable(

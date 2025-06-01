@@ -228,6 +228,24 @@ test pathfind {
             .pos = .{ .x = 4, .y = 0 },
         },
     );
+
+    playfield = .{};
+    playfield.rows[3] = 0b1110000000_0 | BoardMask.EMPTY_ROW;
+    playfield.rows[2] = 0b1100000000_0 | BoardMask.EMPTY_ROW;
+    playfield.rows[1] = 0b1111111000_0 | BoardMask.EMPTY_ROW;
+    playfield.rows[0] = 0b1111111100_0 | BoardMask.EMPTY_ROW;
+    try testPathfind(
+        playfield,
+        &engine.kicks.srs,
+        .{
+            .piece = .{ .kind = .s, .facing = .up },
+            .pos = .{ .x = 3, .y = 18 },
+        },
+        .{
+            .piece = .{ .kind = .s, .facing = .down },
+            .pos = .{ .x = 2, .y = 2 },
+        },
+    );
 }
 
 fn testPathfind(
