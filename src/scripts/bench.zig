@@ -7,6 +7,7 @@ const SevenBag = engine.bags.SevenBag;
 
 const root = @import("perfect-tetris");
 const NN = root.NN;
+const pathfind = root.pathfind;
 const pc = root.pc;
 const pc_slow = root.pc_slow;
 
@@ -31,6 +32,10 @@ pub fn main() !void {
     // Mean memory usage: 173.771KiB
     // Max memory usage:  2.430MiB
     try pcBenchmark(6, "NNs/Fast3.json", false);
+
+    // Mean: 27.526us ± 22.303us
+    // Max:  128.2us
+    try pathfindBenchmark();
 
     // Mean: 43ns
     getFeaturesBenchmark();
@@ -142,6 +147,84 @@ pub fn pcBenchmark(
     const max_mem: u64 = max(u64, &mems);
     std.debug.print("Mean memory usage: {:.3}\n", .{std.fmt.fmtIntSizeBin(avg_mem)});
     std.debug.print("Max memory usage:  {:.3}\n", .{std.fmt.fmtIntSizeBin(max_mem)});
+}
+
+pub fn pathfindBenchmark() !void {
+    const RUN_COUNT = 200;
+    const HEIGHT = 6;
+    const SOL_LEN = HEIGHT * 10 / 4;
+    const TIME_COUNT = RUN_COUNT * SOL_LEN;
+
+    std.debug.print(
+        \\
+        \\------------------------
+        \\   Pathfind Benchmark
+        \\------------------------
+        \\
+    , .{});
+
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const nn = try root.defaultNN(allocator);
+    defer nn.deinit(allocator);
+
+    const placements = try allocator.alloc(root.Placement, SOL_LEN);
+    defer allocator.free(placements);
+
+    var times: [TIME_COUNT]u64 = undefined;
+    for (0..RUN_COUNT) |i| {
+        var gamestate: GameState = .init(
+            SevenBag.init(i),
+            &engine.kicks.srsPlus,
+        );
+
+        const solution = try pc.findPc(
+            SevenBag,
+            allocator,
+            gamestate,
+            nn,
+            HEIGHT,
+            placements,
+            null,
+        );
+
+        for (solution, 0..) |placement, j| {
+            if (gamestate.current.kind != placement.piece.kind) {
+                gamestate.hold();
+            }
+
+            const solve_start = time.nanoTimestamp();
+            const path = pathfind.pathfind(
+                gamestate.playfield,
+                gamestate.kicks,
+                .{ .piece = gamestate.current, .pos = gamestate.pos },
+                placement,
+            );
+            const time_taken: u64 = @intCast(time.nanoTimestamp() - solve_start);
+            times[i * SOL_LEN + j] = time_taken;
+
+            std.mem.doNotOptimizeAway(path);
+            gamestate.current = placement.piece;
+            gamestate.pos = placement.pos;
+            _ = gamestate.lockCurrent(-1);
+            gamestate.nextPiece();
+        }
+    }
+
+    const avg_time: u64 = mean(u64, &times);
+    const max_time: u64 = max(u64, &times);
+    var times_f: [TIME_COUNT]f64 = undefined;
+    for (0..TIME_COUNT) |i| {
+        times_f[i] = @floatFromInt(times[i]);
+    }
+    const time_std: u64 = @intFromFloat(try standardDeviation(f64, &times_f));
+    std.debug.print("Mean: {} ± {}\n", .{
+        std.fmt.fmtDuration(avg_time),
+        std.fmt.fmtDuration(time_std),
+    });
+    std.debug.print("Max:  {}\n", .{std.fmt.fmtDuration(max_time)});
 }
 
 pub fn getFeaturesBenchmark() void {

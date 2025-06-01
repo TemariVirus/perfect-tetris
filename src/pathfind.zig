@@ -123,7 +123,7 @@ pub fn pathfind(
             if (!unmakeMove(&game, move, distances)) {
                 continue;
             }
-            if (old_distance - 1 == distances.get(game.current, game.pos) or
+            if (old_distance > distances.get(game.current, game.pos) or
                 // Drops are allowed to add 0 distance
                 (move == .drop and old_distance == distances.get(game.current, game.pos)))
             {
