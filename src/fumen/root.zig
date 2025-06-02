@@ -1,6 +1,5 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const AnyWriter = std.io.AnyWriter;
 
 const engine = @import("engine");
 const kicks = engine.kicks;
@@ -92,6 +91,7 @@ pub const FumenArgs = struct {
         \\#Q=[<HOLD>](<CURRENT>)<NEXT1><NEXT2>...<NEXTn>
         \\
         \\Outputs each solution to stdout as a new fumen, separated by newlines.
+        \\If a solution cannot be found, an error is printed to stdout instead.
         \\If the fumen is inside a url, the url will be preserved in the output.
         \\Fumen editor: https://fumen.zui.jp/#english.js
         ,
@@ -124,9 +124,11 @@ pub fn main(
     args: FumenArgs,
     fumen: []const u8,
     nn: ?NN,
-    writer: AnyWriter,
 ) !void {
     const start_t = std.time.nanoTimestamp();
+
+    const stdout = std.io.getStdOut().writer();
+    const stderr = std.io.getStdErr().writer();
 
     const parsed = try FumenReader.parse(allocator, fumen);
     defer parsed.deinit(allocator);
@@ -147,7 +149,7 @@ pub fn main(
         {
             return err;
         }
-        std.debug.print("Unable to solve: {}\n", .{err});
+        try stdout.print("Unable to solve: {}\n", .{err});
         break :blk null;
     };
     defer if (solution) |sol| {
@@ -157,17 +159,17 @@ pub fn main(
 
     // Print output fumen
     if (solution) |sol| {
-        try FumenReader.outputFumen(args, parsed, sol, writer);
+        try FumenReader.outputFumen(args, parsed, sol, stdout.any());
     }
 
     if (args.verbose) {
         if (solution) |sol| {
-            std.debug.print(
+            try stderr.print(
                 "Found solution of length {} in {}\n",
                 .{ sol.len, std.fmt.fmtDuration(@intCast(time_taken)) },
             );
         } else {
-            std.debug.print(
+            try stderr.print(
                 "No solution found in {}\n",
                 .{std.fmt.fmtDuration(@intCast(time_taken))},
             );

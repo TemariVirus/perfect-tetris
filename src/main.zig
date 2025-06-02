@@ -147,18 +147,9 @@ pub fn main() !void {
             const nn = try loadNN(allocator, args.nn);
             defer if (nn) |_nn| _nn.deinit(allocator);
 
-            var bf = std.io.bufferedWriter(std.io.getStdOut().writer());
-            const writer = bf.writer().any();
             for (exe_args.positionals) |fumen_str| {
-                try fumen.main(
-                    allocator,
-                    args,
-                    fumen_str,
-                    nn,
-                    writer,
-                );
+                try fumen.main(allocator, args, fumen_str, nn);
             }
-            try bf.flush();
         },
         .validate => |args| {
             if (exe_args.options.help or exe_args.positionals.len == 0) {
