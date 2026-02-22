@@ -54,6 +54,16 @@ pub fn PieceArray(comptime len: usize) type {
             };
         }
 
+        pub fn increment(self: @This(), index: usize) @This() {
+            assert(index < self.len);
+            assert(self.get(index) < std.math.maxInt(u3));
+            // Mask is not needed at the end as all out of bounds bits are already 0
+            assert(~mask & self.items == 0);
+            return .{
+                .items = self.items + (@as(u64, 1) << @intCast(index * item_size)),
+            };
+        }
+
         pub fn shiftLeft(self: @This(), shift: usize) @This() {
             assert(shift <= self.len);
             return .{
@@ -395,10 +405,7 @@ pub fn SequenceIterator(comptime len: usize, comptime unlocked: usize) type {
 
             while (true) {
                 // Increment hold to next piece
-                self.current = self.current.set(
-                    len - 1,
-                    self.current.get(len - 1) + 1,
-                );
+                self.current = self.current.increment(len - 1);
                 // If we have exhausted all holds, advance the next iterator
                 if (self.current.get(len - 1) == 7) {
                     if (self.advanceNext()) |pieces| {
