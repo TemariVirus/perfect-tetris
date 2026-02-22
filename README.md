@@ -181,6 +181,14 @@ possible. The population is saved at the end of every generation.
 
 Settings may be adjusted in the top-level declarations in `src/scripts/train.zig`.
 
+### Count Sequences
+
+```bash
+zig build count-seq
+```
+
+Counts the number of possible next sequences (with any hold). Used to generate the data in [this section](#number-of-possible-next-sequences-with-any-hold).
+
 ## Benchmarks
 
 ```txt
@@ -289,6 +297,7 @@ starts at 0 at the bottom row and increases upwards.
 | 16     | 189,672,855,120   |
 | 17     | 549,973,786,320   |
 | 18     | 1,554,871,505,040 |
+| 19     | 5,108,116,159,440 |
 
 \*Two sequences are considered equivalent if the set of all possible structures
 that can be built by each are equal.

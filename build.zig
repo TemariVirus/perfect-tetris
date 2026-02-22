@@ -18,6 +18,7 @@ pub fn build(b: *Build) void {
     testStep(b, target);
     benchStep(b, target);
     trainStep(b, target, optimize);
+    countSeqStep(b, target, optimize);
     releaseStep(b);
 }
 
@@ -240,6 +241,25 @@ fn trainStep(
     const install = b.addInstallArtifact(exe, .{});
 
     const step = b.step("train", "Train neural networks");
+    step.dependOn(&run_cmd.step);
+    step.dependOn(&install.step);
+}
+
+fn countSeqStep(b: *Build, target: Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
+    const exe_mod = b.createModule(.{
+        .root_source_file = b.path("src/scripts/count-seq.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    exe_mod.addImport("perfect-tetris", libModule(b, target, optimize));
+    importDependencies(exe_mod, &.{.engine}, target, optimize);
+
+    const exe = b.addExecutable(.{ .name = "count-seq", .root_module = exe_mod });
+
+    const run_cmd = b.addRunArtifact(exe);
+    const install = b.addInstallArtifact(exe, .{});
+
+    const step = b.step("count-seq", "Count number of next sequences");
     step.dependOn(&run_cmd.step);
     step.dependOn(&install.step);
 }
