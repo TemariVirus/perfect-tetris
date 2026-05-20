@@ -1,6 +1,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const SolutionList = std.ArrayListUnmanaged([]Placement);
+const Io = std.Io;
+const Duration = Io.Duration;
+const SolutionList = std.ArrayList([]Placement);
 const time = std.time;
 
 const engine = @import("engine");
@@ -83,20 +85,22 @@ const Move = union(enum) {
 };
 
 const AutoPlayer = struct {
+    io: Io,
     allocator: Allocator,
     player: Player,
 
-    solve_signal: std.Thread.Semaphore = .{ .permits = MAX_PC_QUEUE },
-    solutions_mutex: std.Thread.Mutex = .{},
+    solve_signal: Io.Semaphore = .{ .permits = MAX_PC_QUEUE },
+    solutions_mutex: Io.Mutex = .init,
     solutions: SolutionList,
 
     pps: u32,
-    countdown: u64 = 0,
-    ns_per_move: u64 = 0,
-    moves: std.ArrayListUnmanaged(Move) = .empty,
+    countdown: Duration = .zero,
+    ns_per_move: Duration = .zero,
+    moves: std.ArrayList(Move) = .empty,
 
-    pub fn init(allocator: Allocator, player: Player, pps: u32) !AutoPlayer {
+    pub fn init(io: Io, allocator: Allocator, player: Player, pps: u32) !AutoPlayer {
         return AutoPlayer{
+            .io = io,
             .allocator = allocator,
             .player = player,
             .solutions = try .initCapacity(allocator, MAX_PC_QUEUE),
@@ -105,15 +109,18 @@ const AutoPlayer = struct {
     }
 
     pub fn deinit(self: *AutoPlayer) void {
+        const old_cancel_protect = self.io.swapCancelProtection(.blocked);
+        defer _ = self.io.swapCancelProtection(old_cancel_protect);
+
         // Stop all incoming solves before freeing `self.solutions`
         {
-            self.solve_signal.mutex.lock();
-            defer self.solve_signal.mutex.unlock();
+            self.solve_signal.mutex.lock(self.io) catch unreachable;
+            defer self.solve_signal.mutex.unlock(self.io);
             self.solve_signal.permits = 0;
         }
         {
-            self.solutions_mutex.lock();
-            defer self.solutions_mutex.unlock();
+            self.solutions_mutex.lock(self.io) catch unreachable;
+            defer self.solutions_mutex.unlock(self.io);
             for (self.solutions.items) |sol| {
                 self.allocator.free(sol);
             }
@@ -122,10 +129,10 @@ const AutoPlayer = struct {
         self.moves.deinit(self.allocator);
     }
 
-    pub fn tick(self: *AutoPlayer, nanoseconds: u64) Allocator.Error!void {
-        self.tickPlayer(nanoseconds);
+    pub fn tick(self: *AutoPlayer, advanced: Duration) !void {
+        self.tickPlayer(advanced);
 
-        var ns = nanoseconds;
+        var ns = advanced.nanoseconds;
         while (ns > 0) {
             while (self.moves.items.len == 0) {
                 if (self.solutions.items.len == 0) {
@@ -134,23 +141,23 @@ const AutoPlayer = struct {
                 try self.nextMoves();
             }
 
-            const advanced_ns = @min(self.countdown, ns);
+            const advanced_ns = @min(self.countdown.nanoseconds, ns);
             ns -= advanced_ns;
-            self.makeMove(advanced_ns);
+            self.makeMove(.fromNanoseconds(advanced_ns));
         }
     }
 
-    fn tickPlayer(self: *AutoPlayer, nanoseconds: u64) void {
+    fn tickPlayer(self: *AutoPlayer, advanced: Duration) void {
         // Prevent auto-locking
         self.player.move_count = 0;
         self.player.last_move_time = std.math.maxInt(u64);
-        self.player.tick(nanoseconds, 0, &.{});
+        self.player.tick(@intCast(advanced.nanoseconds), 0, &.{});
     }
 
-    fn nextMoves(self: *AutoPlayer) Allocator.Error!void {
+    fn nextMoves(self: *AutoPlayer) !void {
         self.moves.clearRetainingCapacity();
 
-        const solution = self.nextSolution();
+        const solution = try self.nextSolution();
         defer self.allocator.free(solution);
 
         var gamestate = self.player.state;
@@ -195,23 +202,23 @@ const AutoPlayer = struct {
             try self.moves.append(self.allocator, .harddrop);
         }
 
-        self.ns_per_move = time.ns_per_s * solution.len / (self.pps * self.moves.items.len);
+        self.ns_per_move = .fromNanoseconds(time.ns_per_s * solution.len / (self.pps * self.moves.items.len));
         self.countdown = self.ns_per_move;
     }
 
-    fn nextSolution(self: *AutoPlayer) []Placement {
+    fn nextSolution(self: *AutoPlayer) ![]Placement {
         const solution = blk: {
-            self.solutions_mutex.lock();
-            defer self.solutions_mutex.unlock();
+            try self.solutions_mutex.lock(self.io);
+            defer self.solutions_mutex.unlock(self.io);
             break :blk self.solutions.orderedRemove(0);
         };
-        self.solve_signal.post();
+        self.solve_signal.post(self.io);
         return solution;
     }
 
-    fn makeMove(self: *AutoPlayer, advanced_ns: u64) void {
-        self.countdown -= advanced_ns;
-        defer if (self.countdown == 0) {
+    fn makeMove(self: *AutoPlayer, advanced: Duration) void {
+        self.countdown.nanoseconds -= advanced.nanoseconds;
+        defer if (self.countdown.nanoseconds == 0) {
             self.countdown = self.ns_per_move;
             _ = self.moves.orderedRemove(0);
         };
@@ -219,17 +226,17 @@ const AutoPlayer = struct {
 
         if (move == .softdrop) {
             const dy = move.softdrop;
-            const ns_per_drop = self.ns_per_move / dy;
+            const ns_per_drop = @divTrunc(self.ns_per_move.toNanoseconds(), dy);
 
-            const old_y = (self.countdown + advanced_ns) / ns_per_drop;
-            const new_y = self.countdown / ns_per_drop;
-            const dropped = old_y - new_y;
-            self.player.state.pos.y -= @intCast(dropped);
+            const old_y = @divTrunc(self.countdown.toNanoseconds() + advanced.toNanoseconds(), ns_per_drop);
+            const new_y = @divTrunc(self.countdown.toNanoseconds(), ns_per_drop);
+            const dropped: u7 = @intCast(old_y - new_y);
+            self.player.state.pos.y -= dropped;
             self.player.score += dropped;
             return;
         }
 
-        if (self.countdown > 0) {
+        if (self.countdown.nanoseconds > 0) {
             return;
         }
 
@@ -246,16 +253,21 @@ const AutoPlayer = struct {
     }
 
     pub fn appendSolution(self: *AutoPlayer, solution: []Placement) !void {
-        self.solutions_mutex.lock();
-        defer self.solutions_mutex.unlock();
+        self.solutions_mutex.lock(self.io) catch return;
+        defer self.solutions_mutex.unlock(self.io);
         self.solutions.appendAssumeCapacity(try self.allocator.dupe(Placement, solution));
+    }
+
+    pub fn waitNotFull(self: *AutoPlayer) void {
+        self.solve_signal.wait(self.io) catch return;
     }
 };
 
-pub fn main(allocator: Allocator, args: DemoArgs, nn: ?NN) !void {
+pub fn main(io: Io, allocator: Allocator, args: DemoArgs, nn: ?NN) !void {
     try nterm.init(
+        io,
         allocator,
-        std.io.getStdOut(),
+        Io.File.stdout(),
         Player.DISPLAY_W,
         Player.DISPLAY_H,
         null,
@@ -263,7 +275,12 @@ pub fn main(allocator: Allocator, args: DemoArgs, nn: ?NN) !void {
     );
     defer nterm.deinit();
 
-    const seed = args.seed orelse std.crypto.random.int(u64);
+    var seed: u64 = undefined;
+    if (args.seed) |s| {
+        seed = s;
+    } else {
+        io.random(std.mem.asBytes(&seed));
+    }
     const settings: engine.GameSettings = .{
         .g = 0,
         .autolock_grace = std.math.maxInt(u8),
@@ -275,11 +292,12 @@ pub fn main(allocator: Allocator, args: DemoArgs, nn: ?NN) !void {
         },
         .target_mode = .none,
     };
-    var auto: AutoPlayer = try .init(allocator, .init(
+    var auto: AutoPlayer = try .init(io, allocator, .init(
         "PC Solver",
         SevenBag.init(seed),
         args.kicks.toEngine(),
         settings,
+        0,
         .{
             .left = 0,
             .top = 0,
@@ -296,7 +314,7 @@ pub fn main(allocator: Allocator, args: DemoArgs, nn: ?NN) !void {
     );
     pc_thread.detach();
 
-    var render_timer: PeriodicTrigger = .init(time.ns_per_s / FRAMERATE, true);
+    var render_timer: PeriodicTrigger = .init(io, .fromNanoseconds(time.ns_per_s / FRAMERATE), true);
     while (true) {
         if (render_timer.trigger()) |dt| {
             nterm.render() catch |err| {
@@ -310,7 +328,7 @@ pub fn main(allocator: Allocator, args: DemoArgs, nn: ?NN) !void {
             auto.tick(dt) catch @panic("OOM");
             auto.player.draw();
         }
-        time.sleep(1 * time.ns_per_ms);
+        Io.sleep(io, .fromMilliseconds(1), .real) catch {};
     }
 }
 
@@ -322,7 +340,7 @@ fn pcThread(nn: ?NN, min_height: u7, state: GameState, auto: *AutoPlayer) !void 
     const max_lookahead = 1 + @max(15, ((@as(u9, min_height) + 1) * 10 / 4));
 
     while (true) {
-        auto.solve_signal.wait();
+        auto.waitNotFull();
 
         const solution = try root.findPcAuto(
             SevenBag,

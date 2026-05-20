@@ -2,6 +2,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const expect = std.testing.expect;
 const Order = std.math.Order;
+const BoundedArray = @import("bounded_array").BoundedArray;
 
 const engine = @import("engine");
 const BoardMask = engine.bit_masks.BoardMask;
@@ -22,7 +23,7 @@ const PiecePosSet = @import("../PiecePosSet.zig").PiecePosSet(.{ 10, 24, 4 });
 
 // Every intermediate placement needs a previous placement, so the maximum stack
 // size is `PiecePosSet.len * moves.len / (moves.len + 1)`
-const PlacementStack = std.BoundedArray(
+const PlacementStack = BoundedArray(
     PiecePosition,
     PiecePosSet.len * Move.moves.len / (Move.moves.len + 1),
 );
@@ -65,6 +66,7 @@ pub const MoveQueue = std.PriorityQueue(MoveNode, void, compareFn);
 /// placements where `validFn` returns `false`. Higher scores are dequeued
 /// first.
 pub fn orderMoves(
+    allocator: std.mem.Allocator,
     queue: *MoveQueue,
     playfield: BoardMask,
     piece: PieceKind,
@@ -84,7 +86,7 @@ pub fn orderMoves(
             continue;
         }
 
-        try queue.add(.{
+        try queue.push(allocator, .{
             .placement = placement,
             .score = scoreFn(
                 board.rows[0..@min(BoardMask.HEIGHT, new_height)],

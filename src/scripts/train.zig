@@ -2,9 +2,9 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const AtomicInt = std.atomic.Value(i32);
-const fs = std.fs;
+const Dir = std.Io.Dir;
 const json = std.json;
-const Mutex = std.Thread.Mutex;
+const Mutex = std.Io.Mutex;
 const os = std.os;
 const SIG = os.linux.SIG;
 const time = std.time;
@@ -23,12 +23,6 @@ const root = @import("perfect-tetris");
 const NN = root.NN;
 const pc = root.pc;
 
-const IS_DEBUG = switch (@import("builtin").mode) {
-    .Debug, .ReleaseSafe => true,
-    .ReleaseFast, .ReleaseSmall => false,
-};
-var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
-
 // Height of perfect clears to find
 const HEIGHT = 4;
 comptime {
@@ -37,7 +31,7 @@ comptime {
 // Number of threads to use
 const THREADS = 4;
 
-const SAVE_INTERVAL = 10 * time.ns_per_s;
+const SAVE_INTERVAL: std.Io.Duration = .fromSeconds(10);
 const SAVE_DIR = "pops/relu-identity/";
 
 const GENERATIONS = 50;
@@ -56,6 +50,12 @@ const OPTIONS: Trainer.Options = .{
 };
 
 var saving_threads: AtomicInt = .init(0);
+var generation_done: WideBool = .false;
+
+const WideBool = enum(u32) {
+    false,
+    true,
+};
 
 const SaveJson = struct {
     seed: u64,
@@ -63,19 +63,19 @@ const SaveJson = struct {
     fitnesses: []const ?f64,
 };
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     setupExitHandler();
-    zmai.setRandomSeed(std.crypto.random.int(u64));
 
-    const allocator = if (IS_DEBUG)
-        debug_allocator.allocator()
-    else
-        std.heap.smp_allocator;
-    defer if (IS_DEBUG) {
-        _ = debug_allocator.deinit();
-    };
+    const allocator = init.gpa;
+    const io = init.io;
+    zmai.setRandomSeed(blk: {
+        var seed: u64 = undefined;
+        io.random(std.mem.asBytes(&seed));
+        break :blk seed;
+    });
 
     var trainer, const fitnesses, var seed = try loadOrInit(
+        io,
         allocator,
         SAVE_DIR ++ "current.json",
         POPULATION_SIZE,
@@ -84,24 +84,25 @@ pub fn main() !void {
     defer trainer.deinit();
     defer allocator.free(fitnesses);
 
-    var fitnesses_lock: Mutex = .{};
+    var fitnesses_lock: Mutex = .init;
     var threads: [THREADS]std.Thread = undefined;
     for (&threads) |*thread| {
         thread.* = try .spawn(
             .{ .allocator = allocator },
             doWork,
-            .{ &seed, &trainer, fitnesses, &fitnesses_lock },
+            .{ io, allocator, &seed, &trainer, fitnesses, &fitnesses_lock },
         );
     }
     defer for (threads) |thread| {
         thread.join();
     };
 
-    var save_timer: PeriodicTrigger = .init(SAVE_INTERVAL, true);
+    var save_timer: PeriodicTrigger = .init(io, SAVE_INTERVAL, true);
     outer: while (trainer.generation < GENERATIONS) {
-        time.sleep(time.ns_per_ms);
+        try io.sleep(.fromMilliseconds(10), .real);
         if (save_timer.trigger()) |_| {
             try saveSafe(
+                io,
                 allocator,
                 SAVE_DIR ++ "current.json",
                 seed,
@@ -116,6 +117,7 @@ pub fn main() !void {
                 continue :outer;
             }
         }
+        generation_done = .true;
 
         const path = try std.fmt.allocPrint(
             allocator,
@@ -123,7 +125,7 @@ pub fn main() !void {
             .{ SAVE_DIR, trainer.generation },
         );
         defer allocator.free(path);
-        try saveSafe(allocator, path, seed, trainer, fitnesses);
+        try saveSafe(io, allocator, path, seed, trainer, fitnesses);
 
         const final_fitnesses = try allocator.alloc(f64, fitnesses.len);
         defer allocator.free(final_fitnesses);
@@ -133,16 +135,19 @@ pub fn main() !void {
         }
 
         printGenerationStats(trainer, final_fitnesses);
-        seed = std.crypto.random.int(u64);
+        io.random(std.mem.asBytes(&seed));
         try trainer.nextGeneration(final_fitnesses);
 
-        fitnesses_lock.lock();
+        try fitnesses_lock.lock(io);
         @memset(fitnesses, null);
-        fitnesses_lock.unlock();
+        fitnesses_lock.unlock(io);
+
+        generation_done = .false;
+        io.futexWake(WideBool, &generation_done, THREADS);
     }
 }
 
-const handle_signals = [_]c_int{
+const handle_signals = [_]SIG{
     SIG.ABRT,
     SIG.INT,
     SIG.QUIT,
@@ -162,28 +167,21 @@ fn setupExitHandler() void {
     } else {
         const action: os.linux.Sigaction = .{
             .handler = .{ .handler = handleExit },
-            .mask = os.linux.empty_sigset,
+            .mask = os.linux.sigemptyset(),
             .flags = 0,
         };
         for (handle_signals) |sig| {
-            _ = os.linux.sigaction(@intCast(sig), &action, null);
+            _ = os.linux.sigaction(sig, &action, null);
         }
     }
 }
 
-fn handleExit(sig: c_int) callconv(.C) void {
-    if (std.mem.containsAtLeast(c_int, &handle_signals, 1, &.{sig})) {
-        const TIMEOUT = 10 * time.ns_per_s;
-        const start = time.nanoTimestamp();
-
+fn handleExit(sig: SIG) callconv(.c) void {
+    if (std.mem.containsAtLeast(SIG, &handle_signals, 1, &.{sig})) {
         // Set to -1 to signal saves to stop and then wait for saves to finish
         const saving_count = saving_threads.swap(-1, .monotonic);
         while (saving_threads.load(.monotonic) >= -saving_count) {
-            // Force stop if saves take too long to finish
-            if (time.nanoTimestamp() - start > TIMEOUT) {
-                break;
-            }
-            time.sleep(time.ns_per_ms);
+            std.Thread.yield() catch {};
         }
         std.process.exit(0);
     }
@@ -194,14 +192,15 @@ fn handleExitWindows(sig: c_int, _: c_int) callconv(.C) void {
 }
 
 fn loadOrInit(
+    io: std.Io,
     allocator: Allocator,
     path: []const u8,
     population_size: usize,
     options: Trainer.Options,
 ) !struct { Trainer, []?f64, u64 } {
     // Init if file does not exist
-    fs.cwd().access(path, .{}) catch |e|
-        if (e == fs.Dir.AccessError.FileNotFound) {
+    Dir.cwd().access(io, path, .{}) catch |e|
+        if (e == Dir.AccessError.FileNotFound) {
             var trainer = try Trainer.init(
                 allocator,
                 population_size,
@@ -211,17 +210,21 @@ fn loadOrInit(
             errdefer trainer.deinit();
             const fitnesses = try allocator.alloc(?f64, population_size);
             @memset(fitnesses, null);
+            var seed: u64 = undefined;
+            io.random(std.mem.asBytes(&seed));
             return .{
                 trainer,
                 fitnesses,
-                std.crypto.random.int(u64),
+                seed,
             };
         } else return e;
 
-    const file = try fs.cwd().openFile(path, .{});
-    defer file.close();
+    const file = try Dir.cwd().openFile(io, path, .{});
+    defer file.close(io);
+    var buf: [4096]u8 = undefined;
+    var file_reader = file.reader(io, &buf);
 
-    var reader = json.reader(allocator, file.reader());
+    var reader: json.Reader = .init(allocator, &file_reader.interface);
     defer reader.deinit();
 
     const parsed = try json.parseFromTokenSource(
@@ -254,6 +257,7 @@ fn loadOrInit(
 }
 
 fn save(
+    io: std.Io,
     allocator: Allocator,
     path: []const u8,
     seed: u64,
@@ -272,48 +276,38 @@ fn save(
     const trainer_json: Trainer.TrainerJson = try .init(allocator, trainer);
     defer trainer_json.deinit(allocator);
 
-    try fs
+    try Dir
         .cwd()
-        .makePath(std.fs.path.dirname(path) orelse return error.InvalidPath);
-    const file = try fs.cwd().createFile(path, .{});
-    defer file.close();
+        .createDirPath(io, std.fs.path.dirname(path) orelse return error.InvalidPath);
+    const file = try Dir.cwd().createFile(io, path, .{});
+    defer file.close(io);
+    var buf: [4096]u8 = undefined;
+    var writer = file.writer(io, &buf);
 
-    try json.stringify(SaveJson{
-        .seed = seed,
-        .trainer = trainer_json,
-        .fitnesses = fitnesses,
-    }, .{}, file.writer());
+    try writer.interface.print("{f}", .{
+        json.fmt(SaveJson{
+            .seed = seed,
+            .trainer = trainer_json,
+            .fitnesses = fitnesses,
+        }, .{}),
+    });
+    try writer.flush();
 }
 
 /// Performs saving on a new thread so that it is not interrupted by the exit
 /// handler.
 fn saveSafe(
+    io: std.Io,
     allocator: Allocator,
     path: []const u8,
     seed: u64,
     trainer: Trainer,
     fitnesses: []?f64,
 ) !void {
-    const saveOnceThread = struct {
-        fn saveOnceThread(
-            _path: []const u8,
-            _seed: u64,
-            _trainer: Trainer,
-            _fitnesses: []?f64,
-        ) !void {
-            const _allocator = if (IS_DEBUG)
-                debug_allocator.allocator()
-            else
-                std.heap.smp_allocator;
-
-            try save(_allocator, _path, _seed, _trainer, _fitnesses);
-        }
-    }.saveOnceThread;
-
     const save_thread: std.Thread = try .spawn(
         .{ .allocator = allocator },
-        saveOnceThread,
-        .{ path, seed, trainer, fitnesses },
+        save,
+        .{ io, allocator, path, seed, trainer, fitnesses },
     );
     save_thread.join();
 }
@@ -334,20 +328,19 @@ fn printGenerationStats(trainer: Trainer, fitnesses: []const f64) void {
 }
 
 fn doWork(
+    io: std.Io,
+    allocator: Allocator,
     seed: *const u64,
     trainer: *const Trainer,
     fitnesses: []?f64,
     fitnesses_lock: *Mutex,
 ) !void {
-    const allocator = if (IS_DEBUG)
-        debug_allocator.allocator()
-    else
-        std.heap.smp_allocator;
-
     while (true) {
         const i = blk: {
-            fitnesses_lock.lock();
-            defer fitnesses_lock.unlock();
+            const old_cancel_protect = io.swapCancelProtection(.blocked);
+            defer _ = io.swapCancelProtection(old_cancel_protect);
+            fitnesses_lock.lock(io) catch unreachable;
+            defer fitnesses_lock.unlock(io);
 
             for (fitnesses, 0..) |fit, i| {
                 if (fit == null) {
@@ -360,7 +353,7 @@ fn doWork(
         };
         // Wait for work if all fitnesses have been calculated
         if (i == trainer.population.len) {
-            time.sleep(time.ns_per_ms);
+            io.futexWaitUncancelable(WideBool, &generation_done, .true);
             continue;
         }
 
@@ -374,7 +367,7 @@ fn doWork(
         );
         defer nn.deinit(allocator);
 
-        const fitness = try getFitness(allocator, seed.*, .{
+        const fitness = try getFitness(io, allocator, seed.*, .{
             .inputs_used = inputs_used,
             .net = nn,
         });
@@ -383,7 +376,7 @@ fn doWork(
     }
 }
 
-fn getFitness(allocator: Allocator, seed: u64, nn: NN) !f64 {
+fn getFitness(io: std.Io, allocator: Allocator, seed: u64, nn: NN) !f64 {
     const RUN_COUNT = 100;
 
     const placements = try allocator.alloc(root.Placement, HEIGHT * 10 / 4);
@@ -392,7 +385,7 @@ fn getFitness(allocator: Allocator, seed: u64, nn: NN) !f64 {
     defer allocator.free(pieces);
 
     var rand: std.Random.DefaultPrng = .init(seed);
-    var timer: time.Timer = try .start();
+    const start: std.Io.Timestamp = .now(io, .real);
     for (0..RUN_COUNT) |i| {
         // Start at random position in bag
         var bag: SevenBag = .init(rand.next());
@@ -426,7 +419,7 @@ fn getFitness(allocator: Allocator, seed: u64, nn: NN) !f64 {
         if (i == 0 or i % 10 != 0) {
             continue;
         }
-        const time_taken = @as(f64, @floatFromInt(timer.read())) /
+        const time_taken = @as(f64, @floatFromInt(start.untilNow(io, .real).toNanoseconds())) /
             @as(f64, @floatFromInt(i));
         const fitness = time.ns_per_s / (time_taken + 1);
         if (fitness < 15) {
@@ -435,7 +428,7 @@ fn getFitness(allocator: Allocator, seed: u64, nn: NN) !f64 {
     }
 
     // Return solutions/s as fitness
-    const time_taken = @as(f64, @floatFromInt(timer.read())) / RUN_COUNT;
+    const time_taken = @as(f64, @floatFromInt(start.untilNow(io, .real).toNanoseconds())) / RUN_COUNT;
     // Add 1 to avoid division by zero
     return time.ns_per_s / (time_taken + 1);
 }

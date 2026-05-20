@@ -252,13 +252,15 @@ const SevenBag = engine.bags.SevenBag;
 
 test "4-line PC" {
     const allocator = std.testing.allocator;
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    const io = threaded.io();
 
     var gamestate: GameState(SevenBag) = .init(
         SevenBag.init(0),
         &engine.kicks.srsPlus,
     );
 
-    const nn: NN = try .load(allocator, "NNs/Fast3.json");
+    const nn: NN = try .load(io, allocator, "NNs/Fast3.json");
     defer nn.deinit(allocator);
 
     const placements = try allocator.alloc(Placement, 10);

@@ -5,13 +5,11 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const expect = std.testing.expect;
+
 const PieceKind = @import("engine").pieces.PieceKind;
 
 const MAX_BAG_LEN = 7;
-const BagLenInt = std.math.Log2IntCeil(@Type(.{ .int = .{
-    .bits = MAX_BAG_LEN,
-    .signedness = .unsigned,
-} }));
+const BagLenInt = std.math.Log2IntCeil(@Int(.unsigned, MAX_BAG_LEN));
 
 /// Stores an immutable array of integers (std.PackedIntArray but with a single
 /// backing integer).

@@ -1,13 +1,10 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const AnyWriter = std.io.AnyWriter;
+const Io = std.Io;
+const Dir = Io.Dir;
 const assert = std.debug.assert;
-const fs = std.fs;
-const Mutex = Thread.Mutex;
 const os = std.os;
 const SIG = os.linux.SIG;
-const Thread = std.Thread;
-const Timer = std.time.Timer;
 
 const engine = @import("engine");
 const GameState = engine.GameState(SevenBag);
@@ -19,12 +16,6 @@ const SequenceIterator = root.next.SequenceIterator;
 const pc = root.pc;
 const PCSolution = root.PCSolution;
 const Placement = root.Placement;
-
-const IS_DEBUG = switch (@import("builtin").mode) {
-    .Debug, .ReleaseSafe => true,
-    .ReleaseFast, .ReleaseSmall => false,
-};
-var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
 // Height of perfect clears to find
 const HEIGHT = 4;
@@ -41,6 +32,21 @@ const SAVE_PATH = std.fmt.comptimePrint("pc-data/{}", .{HEIGHT});
 // before exiting.
 var saving_threads: std.atomic.Value(i32) = .init(0);
 
+const Timer = struct {
+    last: Io.Timestamp,
+
+    pub fn start(io: Io) Timer {
+        return .{ .last = Io.Timestamp.now(io, .real) };
+    }
+
+    pub fn lap(self: *Timer, io: Io) Io.Duration {
+        const now = Io.Timestamp.now(io, .real);
+        const dur = self.last.durationTo(now);
+        self.last = now;
+        return dur;
+    }
+};
+
 /// Thread-safe ring buffer for distributing work, and storing and writing
 /// solutions to disk.
 const SolutionBuffer = struct {
@@ -49,8 +55,9 @@ const SolutionBuffer = struct {
     pub const Iterator = SequenceIterator(NEXT_LEN + 1, @min(6, NEXT_LEN));
     pub const AtomicLength = std.atomic.Value(isize);
 
-    write_lock: Mutex = .{},
-    read_lock: Mutex = .{},
+    io: Io,
+    write_lock: Io.Mutex = .init,
+    read_lock: Io.Mutex = .init,
     solved: u64 = 0,
     count: u64 = 0,
     last_count: u64 = 0,
@@ -64,9 +71,10 @@ const SolutionBuffer = struct {
     solutions: [CHUNKS][CHUNK_SIZE][NEXT_LEN]Placement,
 
     /// Initializes a new SolutionBuffer with the given allocator.
-    pub fn init(allocator: Allocator) !SolutionBuffer {
+    pub fn init(io: Io, allocator: Allocator) SolutionBuffer {
         return .{
-            .timer = try Timer.start(),
+            .io = io,
+            .timer = .start(io),
             .iter = .init(allocator),
             .sequences = undefined,
             .solutions = undefined,
@@ -75,7 +83,7 @@ const SolutionBuffer = struct {
 
     /// Loads a SolutionBuffer with data from disk or initializes a new one if
     /// the files don't exist.
-    pub fn loadOrInit(allocator: Allocator, path: []const u8) !SolutionBuffer {
+    pub fn loadOrInit(io: Io, allocator: Allocator, path: []const u8) !SolutionBuffer {
         const pc_path = try std.fmt.allocPrint(allocator, "{s}.pc", .{path});
         defer allocator.free(pc_path);
         const count_path = try std.fmt.allocPrint(
@@ -85,37 +93,37 @@ const SolutionBuffer = struct {
         );
         defer allocator.free(count_path);
 
-        var self = try init(allocator);
+        var self = init(io, allocator);
 
         // Get number of solves
         blk: {
-            const file = fs.cwd().openFile(pc_path, .{}) catch |e| {
+            const file = Dir.cwd().openFile(io, pc_path, .{}) catch |e| {
                 // Leave self.solved as 0 if the file doesn't exist
-                if (e != fs.File.OpenError.FileNotFound) {
+                if (e != Io.File.OpenError.FileNotFound) {
                     return e;
                 }
                 break :blk;
             };
-            defer file.close();
+            defer file.close(io);
 
-            const stat = try file.stat();
+            const stat = try file.stat(io);
             const SOLUTION_SIZE = 8 + NEXT_LEN;
             self.solved = @divExact(stat.size, SOLUTION_SIZE);
         }
 
         // Get count
-        const file = fs.cwd().openFile(count_path, .{}) catch |e| {
+        const file = Dir.cwd().openFile(io, count_path, .{}) catch |e| {
             // Leave self.conut as 0 if the file doesn't exist
-            if (e != fs.File.OpenError.FileNotFound) {
+            if (e != Io.File.OpenError.FileNotFound) {
                 return e;
             }
             return self;
         };
-        defer file.close();
+        defer file.close(io);
 
         const max_len = comptime std.math.log10_int(@as(u64, std.math.maxInt(u64))) + 1;
         var buf: [max_len]u8 = undefined;
-        const buf_len = try file.readAll(&buf);
+        const buf_len = try file.readPositionalAll(io, &buf, 0);
 
         self.count = try std.fmt.parseInt(u64, buf[0..buf_len], 10);
         self.last_count = self.count;
@@ -128,9 +136,11 @@ const SolutionBuffer = struct {
     }
 
     pub fn deinit(self: *SolutionBuffer) void {
-        self.write_lock.lock();
-        defer self.write_lock.unlock();
+        const old_cancel_protect = self.io.swapCancelProtection(.blocked);
+        defer _ = self.io.swapCancelProtection(old_cancel_protect);
 
+        self.write_lock.lock(self.io) catch unreachable;
+        defer self.write_lock.unlock(self.io);
         self.iter.deinit();
     }
 
@@ -146,8 +156,8 @@ const SolutionBuffer = struct {
     pub fn nextChunk(
         self: *SolutionBuffer,
     ) !?struct { *AtomicLength, []u48, [][NEXT_LEN]Placement } {
-        self.write_lock.lock();
-        defer self.write_lock.unlock();
+        try self.write_lock.lock(self.io);
+        defer self.write_lock.unlock(self.io);
 
         if (self.isFull()) {
             std.debug.print(
@@ -155,7 +165,7 @@ const SolutionBuffer = struct {
                 .{},
             );
             // Wait for space to become available
-            Thread.Futex.wait(&self.read_idx, mask2(self.write_idx + CHUNKS));
+            try self.io.futexWait(u32, &self.read_idx.raw, mask2(self.write_idx + CHUNKS));
         }
 
         if (self.iter.done()) {
@@ -190,8 +200,8 @@ const SolutionBuffer = struct {
         self: *SolutionBuffer,
         path: []const u8,
     ) !void {
-        self.read_lock.lock();
-        defer self.read_lock.unlock();
+        try self.read_lock.lock(self.io);
+        defer self.read_lock.unlock(self.io);
 
         // Check if there's anything to write
         if (self.isEmpty() or
@@ -219,25 +229,27 @@ const SolutionBuffer = struct {
             );
             defer allocator.free(pc_path);
 
-            break :blk fs.cwd().openFile(
+            break :blk Dir.cwd().openFile(
+                self.io,
                 pc_path,
                 .{ .mode = .write_only },
             ) catch |e| {
                 // Create file if it doesn't exist
-                if (e != fs.File.OpenError.FileNotFound) {
+                if (e != Io.File.OpenError.FileNotFound) {
                     return e;
                 }
-                try fs.cwd().makePath(
-                    fs.path.dirname(pc_path) orelse return error.InvalidPath,
+                try Dir.cwd().createDirPath(
+                    self.io,
+                    std.fs.path.dirname(pc_path) orelse return error.InvalidPath,
                 );
-                break :blk try fs.cwd().createFile(pc_path, .{});
+                break :blk try Dir.cwd().createFile(self.io, pc_path, .{});
             };
         };
-        defer pc_file.close();
+        defer pc_file.close(self.io);
         // Seek to end to append to file
-        try pc_file.seekFromEnd(0);
-        var buf_writer = std.io.bufferedWriter(pc_file.writer());
-        const pc_writer = buf_writer.writer().any();
+        var buf: [4096]u8 = undefined;
+        var pc_writer = pc_file.writer(self.io, &buf);
+        try pc_writer.seekToUnbuffered(try pc_file.length(self.io));
 
         var wrote = false;
         // A negative length indicates that the chunk is not done yet
@@ -251,13 +263,13 @@ const SolutionBuffer = struct {
             // it actually is. This isn't an issue as the iterator is already
             // exhausted.
             self.count += CHUNK_SIZE;
-            try self.saveAppend(pc_writer, len);
+            try self.saveAppend(&pc_writer.interface, len);
 
             wrote = true;
             self.read_idx.store(mask2(self.read_idx.raw + 1), .monotonic);
-            Thread.Futex.wake(&self.read_idx, 1);
+            self.io.futexWake(u32, &self.read_idx.raw, 1);
         }
-        try buf_writer.flush();
+        try pc_writer.flush();
 
         const count_path = try std.fmt.allocPrint(
             allocator,
@@ -265,14 +277,16 @@ const SolutionBuffer = struct {
             .{path},
         );
         defer allocator.free(count_path);
-        var count_file = try fs.cwd().atomicFile(
+        var count_file = try Dir.cwd().createFileAtomic(
+            self.io,
             count_path,
-            .{ .make_path = true },
+            .{ .make_path = true, .replace = true },
         );
-        defer count_file.deinit();
+        defer count_file.deinit(self.io);
 
-        try count_file.file.writer().print("{d}", .{self.count});
-        try count_file.finish();
+        var count_writer = count_file.file.writer(self.io, &.{});
+        try count_writer.interface.print("{d}", .{self.count});
+        try count_file.replace(self.io);
 
         if (wrote) {
             try self.printStatsAndBackup(path);
@@ -281,7 +295,7 @@ const SolutionBuffer = struct {
 
     fn saveAppend(
         self: *SolutionBuffer,
-        pc_writer: AnyWriter,
+        pc_writer: *Io.Writer,
         len: usize,
     ) !void {
         assert(NEXT_LEN <= 16);
@@ -347,7 +361,7 @@ const SolutionBuffer = struct {
                 );
                 defer allocator.free(backup_path);
 
-                try fs.cwd().copyFile(pc_path, fs.cwd(), backup_path, .{});
+                try Dir.cwd().copyFile(pc_path, .cwd(), backup_path, self.io, .{});
             }
             {
                 const count_path = try std.fmt.allocPrint(
@@ -363,12 +377,12 @@ const SolutionBuffer = struct {
                 );
                 defer allocator.free(backup_path);
 
-                try fs.cwd().copyFile(count_path, fs.cwd(), backup_path, .{});
+                try Dir.cwd().copyFile(count_path, .cwd(), backup_path, self.io, .{});
             }
 
             std.debug.print(
-                "Time per sequence per thread: {}\n\n",
-                .{std.fmt.fmtDuration(self.timer.lap() * THREADS / count)},
+                "Time per sequence per thread: {f}\n\n",
+                .{Io.Duration.fromNanoseconds(@divTrunc(self.timer.lap(self.io).toNanoseconds() * THREADS, count))},
             );
             self.last_count = self.count;
         }
@@ -383,26 +397,20 @@ const SolutionBuffer = struct {
     }
 };
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
+    const io = init.io;
     setupExitHandler();
 
-    const allocator = if (IS_DEBUG)
-        debug_allocator.allocator()
-    else
-        std.heap.smp_allocator;
-    defer if (IS_DEBUG) {
-        _ = debug_allocator.deinit();
-    };
-
-    var buf: SolutionBuffer = try .loadOrInit(allocator, SAVE_PATH);
+    var buf: SolutionBuffer = try .loadOrInit(io, allocator, SAVE_PATH);
     defer buf.deinit();
 
-    var threads: [THREADS]Thread = undefined;
+    var threads: [THREADS]std.Thread = undefined;
     for (0..threads.len) |i| {
         threads[i] = try .spawn(
             .{ .allocator = allocator },
             solveThread,
-            .{&buf},
+            .{ allocator, &buf },
         );
     }
     for (threads) |thread| {
@@ -411,11 +419,11 @@ pub fn main() !void {
 
     // Wait for saves to finish
     while (saving_threads.load(.monotonic) > 0) {
-        std.time.sleep(std.time.ns_per_ms);
+        io.sleep(.fromMilliseconds(1), .cpu_process) catch {};
     }
 }
 
-const handle_signals = [_]c_int{
+const handle_signals = [_]SIG{
     SIG.ABRT,
     SIG.INT,
     SIG.QUIT,
@@ -427,7 +435,7 @@ fn setupExitHandler() void {
             extern "c" fn signal(
                 sig: c_int,
                 func: *const fn (c_int, c_int) callconv(os.windows.WINAPI) void,
-            ) callconv(.C) *anyopaque;
+            ) callconv(.c) *anyopaque;
         }.signal;
         for (handle_signals) |sig| {
             _ = signal(sig, handleExitWindows);
@@ -435,21 +443,21 @@ fn setupExitHandler() void {
     } else {
         const action: os.linux.Sigaction = .{
             .handler = .{ .handler = handleExit },
-            .mask = os.linux.empty_sigset,
+            .mask = os.linux.sigemptyset(),
             .flags = 0,
         };
         for (handle_signals) |sig| {
-            _ = os.linux.sigaction(@intCast(sig), &action, null);
+            _ = os.linux.sigaction(sig, &action, null);
         }
     }
 }
 
-fn handleExit(sig: c_int) callconv(.C) void {
-    if (std.mem.containsAtLeast(c_int, &handle_signals, 1, &.{sig})) {
+fn handleExit(sig: SIG) callconv(.c) void {
+    if (std.mem.containsAtLeast(SIG, &handle_signals, 1, &.{sig})) {
         // Set to -1 to signal saves to stop and then wait for saves to finish
         const saving_count = saving_threads.swap(-1, .monotonic);
         while (saving_threads.load(.monotonic) >= -saving_count) {
-            std.time.sleep(std.time.ns_per_ms);
+            std.Thread.yield() catch {};
         }
         std.process.exit(0);
     }
@@ -459,12 +467,7 @@ fn handleExitWindows(sig: c_int, _: c_int) callconv(.C) void {
     handleExit(sig);
 }
 
-fn solveThread(buf: *SolutionBuffer) !void {
-    const allocator = if (IS_DEBUG)
-        debug_allocator.allocator()
-    else
-        std.heap.smp_allocator;
-
+fn solveThread(allocator: Allocator, buf: *SolutionBuffer) !void {
     const nn = try root.defaultNN(allocator);
     defer nn.deinit(allocator);
 

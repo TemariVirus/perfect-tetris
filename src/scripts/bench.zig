@@ -1,5 +1,6 @@
 const std = @import("std");
-const time = std.time;
+const Duration = std.Io.Duration;
+const Timestamp = std.Io.Timestamp;
 
 const engine = @import("engine");
 const GameState = engine.GameState(SevenBag);
@@ -10,6 +11,8 @@ const NN = root.NN;
 const pathfind = root.pathfind;
 const pc = root.pc;
 const pc_slow = root.pc_slow;
+
+const io = std.Io.Threaded.global_single_threaded.io();
 
 pub fn main() !void {
     // Benchmark command:
@@ -46,7 +49,7 @@ fn mean(T: type, values: []const T) T {
     for (values) |v| {
         sum += v;
     }
-    return sum / std.math.lossyCast(T, values.len);
+    return @divTrunc(sum, std.math.lossyCast(T, values.len));
 }
 
 fn max(T: type, values: []const T) T {
@@ -67,7 +70,7 @@ fn standardDeviation(T: type, values: []const T) !f64 {
 pub fn pcBenchmark(
     comptime height: u8,
     nn_path: []const u8,
-    slow: bool,
+    comptime slow: bool,
 ) !void {
     const RUN_COUNT = 200;
 
@@ -87,13 +90,13 @@ pub fn pcBenchmark(
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const nn = try NN.load(allocator, nn_path);
+    const nn = try NN.load(io, allocator, nn_path);
     defer nn.deinit(allocator);
 
     const placements = try allocator.alloc(root.Placement, height * 10 / 4);
     defer allocator.free(placements);
 
-    var times: [RUN_COUNT]u64 = undefined;
+    var times: [RUN_COUNT]i96 = undefined;
     var mems: [RUN_COUNT]u64 = undefined;
     for (0..RUN_COUNT) |i| {
         const gamestate: GameState = .init(
@@ -110,7 +113,7 @@ pub fn pcBenchmark(
         var arena: std.heap.ArenaAllocator = .init(allocator);
         defer arena.deinit();
 
-        const solve_start = time.nanoTimestamp();
+        const solve_start: Timestamp = .now(io, .cpu_process);
         const solution = if (slow)
             try pc_slow.findPc(
                 .{
@@ -135,29 +138,29 @@ pub fn pcBenchmark(
                 },
                 placements,
             );
-        times[i] = @intCast(time.nanoTimestamp() - solve_start);
+        times[i] = solve_start.untilNow(io, .cpu_process).toNanoseconds();
         std.mem.doNotOptimizeAway(solution);
 
         mems[i] = arena.queryCapacity();
     }
 
-    const avg_time: u64 = mean(u64, &times);
-    const max_time: u64 = max(u64, &times);
+    const avg_time = mean(i96, &times);
+    const max_time = max(i96, &times);
     var times_f: [RUN_COUNT]f64 = undefined;
     for (0..RUN_COUNT) |i| {
         times_f[i] = @floatFromInt(times[i]);
     }
-    const time_std: u64 = @intFromFloat(try standardDeviation(f64, &times_f));
-    std.debug.print("Mean: {} ± {}\n", .{
-        std.fmt.fmtDuration(avg_time),
-        std.fmt.fmtDuration(time_std),
+    const time_std: i96 = @intFromFloat(try standardDeviation(f64, &times_f));
+    std.debug.print("Mean: {f} ± {f}\n", .{
+        Duration.fromNanoseconds(avg_time),
+        Duration.fromNanoseconds(time_std),
     });
-    std.debug.print("Max:  {}\n", .{std.fmt.fmtDuration(max_time)});
+    std.debug.print("Max:  {f}\n", .{Duration.fromNanoseconds(max_time)});
 
-    const avg_mem: u64 = mean(u64, &mems);
-    const max_mem: u64 = max(u64, &mems);
-    std.debug.print("Mean memory usage: {:.3}\n", .{std.fmt.fmtIntSizeBin(avg_mem)});
-    std.debug.print("Max memory usage:  {:.3}\n", .{std.fmt.fmtIntSizeBin(max_mem)});
+    const avg_mem = mean(u64, &mems);
+    const max_mem = max(u64, &mems);
+    std.debug.print("Mean memory usage: {Bi:.3}\n", .{avg_mem});
+    std.debug.print("Max memory usage:  {Bi:.3}\n", .{max_mem});
 }
 
 pub fn pathfindBenchmark() !void {
@@ -184,7 +187,7 @@ pub fn pathfindBenchmark() !void {
     const placements = try allocator.alloc(root.Placement, SOL_LEN);
     defer allocator.free(placements);
 
-    var times: [TIME_COUNT]u64 = undefined;
+    var times: [TIME_COUNT]i96 = undefined;
     for (0..RUN_COUNT) |i| {
         var gamestate: GameState = .init(
             SevenBag.init(i),
@@ -215,14 +218,14 @@ pub fn pathfindBenchmark() !void {
                 gamestate.hold();
             }
 
-            const solve_start = time.nanoTimestamp();
+            const solve_start: Timestamp = .now(io, .cpu_process);
             const path = pathfind.pathfind(
                 gamestate.playfield,
                 gamestate.kicks,
                 .{ .piece = gamestate.current, .pos = gamestate.pos },
                 placement,
             );
-            const time_taken: u64 = @intCast(time.nanoTimestamp() - solve_start);
+            const time_taken = solve_start.untilNow(io, .cpu_process).toNanoseconds();
             times[i * SOL_LEN + j] = time_taken;
 
             std.mem.doNotOptimizeAway(path);
@@ -233,18 +236,18 @@ pub fn pathfindBenchmark() !void {
         }
     }
 
-    const avg_time: u64 = mean(u64, &times);
-    const max_time: u64 = max(u64, &times);
+    const avg_time = mean(i96, &times);
+    const max_time = max(i96, &times);
     var times_f: [TIME_COUNT]f64 = undefined;
     for (0..TIME_COUNT) |i| {
         times_f[i] = @floatFromInt(times[i]);
     }
-    const time_std: u64 = @intFromFloat(try standardDeviation(f64, &times_f));
-    std.debug.print("Mean: {} ± {}\n", .{
-        std.fmt.fmtDuration(avg_time),
-        std.fmt.fmtDuration(time_std),
+    const time_std: i96 = @intFromFloat(try standardDeviation(f64, &times_f));
+    std.debug.print("Mean: {f} ± {f}\n", .{
+        Duration.fromNanoseconds(avg_time),
+        Duration.fromNanoseconds(time_std),
     });
-    std.debug.print("Max:  {}\n", .{std.fmt.fmtDuration(max_time)});
+    std.debug.print("Max:  {f}\n", .{Duration.fromNanoseconds(max_time)});
 }
 
 pub fn getFeaturesBenchmark() void {
@@ -274,16 +277,16 @@ pub fn getFeaturesBenchmark() void {
     }
     const playfield: root.bit_masks.BoardMask = .from(game.playfield);
 
-    const start = time.nanoTimestamp();
+    const start: Timestamp = .now(io, .cpu_process);
     for (0..RUN_COUNT) |_| {
         std.mem.doNotOptimizeAway(
             pc.getFeatures(playfield, 6, @splat(true)),
         );
     }
-    const time_taken: u64 = @intCast(time.nanoTimestamp() - start);
+    const time_taken = start.untilNow(io, .cpu_process).toNanoseconds();
 
     std.debug.print(
-        "Mean: {}\n",
-        .{std.fmt.fmtDuration(time_taken / RUN_COUNT)},
+        "Mean: {f}\n",
+        .{Duration.fromNanoseconds(@divTrunc(time_taken, RUN_COUNT))},
     );
 }

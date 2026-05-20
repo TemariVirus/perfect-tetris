@@ -1,10 +1,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const AnyReader = std.io.AnyReader;
 const assert = std.debug.assert;
-const File = std.fs.File;
-const io = std.io;
-const SolutionIndex = std.ArrayListUnmanaged(u64);
+const File = std.Io.File;
+const SolutionIndex = std.ArrayList(u64);
 
 const engine = @import("engine");
 const Piece = engine.pieces.Piece;
@@ -64,38 +62,43 @@ const Event = union(enum) {
     winsize: vaxis.Winsize,
 };
 
-pub fn main(allocator: Allocator, args: DisplayArgs, path: []const u8) !void {
+pub fn main(
+    io: std.Io,
+    allocator: Allocator,
+    environ: *std.process.Environ.Map,
+    args: DisplayArgs,
+    path: []const u8,
+) !void {
     _ = args; // autofix
 
     // Open PC file
-    const pc_file = try std.fs.cwd().openFile(path, .{});
-    defer pc_file.close();
-    const reader = pc_file.reader().any();
+    const pc_file = try std.Io.Dir.cwd().openFile(io, path, .{});
+    defer pc_file.close(io);
+    var pc_buf: [8192]u8 = undefined;
+    var reader = pc_file.reader(io, &pc_buf);
 
     // Set up terminal and vaxis
-    var tty: Tty = try .init();
+    var tty_buf: [4096]u8 = undefined;
+    var tty: Tty = try .init(io, &tty_buf);
     defer tty.deinit();
-    var bf = tty.bufferedWriter();
-    const stdout = bf.writer().any();
+    const stdout = &tty.tty_writer;
 
-    var vx = try vaxis.init(allocator, .{});
-    defer vx.deinit(allocator, tty.anyWriter());
-    try vx.enterAltScreen(tty.anyWriter());
-    try vx.enableDetectedFeatures(tty.anyWriter());
+    var vx = try vaxis.init(io, allocator, environ, .{});
+    defer vx.deinit(allocator, &stdout.interface);
+    try vx.enterAltScreen(&stdout.interface);
+    try vx.enableDetectedFeatures(&stdout.interface);
 
+    // TODO: fix terminal size not updating
     // Vaxis event loop
-    var loop: Loop = .{
-        .tty = &tty,
-        .vaxis = &vx,
-    };
-    try loop.init();
+    var loop: Loop = .init(io, &tty, &vx);
     try loop.start();
+    defer loop.stop();
 
     // Start indexing thread
     const SOLUTION_MIN_SIZE = 8;
     var solution_index: SolutionIndex = try .initCapacity(
         allocator,
-        (try pc_file.getEndPos()) / SOLUTION_MIN_SIZE / INDEX_INTERVAL + 1,
+        (try pc_file.length(io)) / SOLUTION_MIN_SIZE / INDEX_INTERVAL + 1,
     );
     defer solution_index.deinit(allocator);
 
@@ -104,21 +107,21 @@ pub fn main(allocator: Allocator, args: DisplayArgs, path: []const u8) !void {
     const index_thread: std.Thread = try .spawn(
         .{ .allocator = allocator },
         indexThread,
-        .{ &stop_index_thread, path, &solution_index, &loop },
+        .{ io, &stop_index_thread, path, &solution_index, &loop },
     );
     defer stop_index_thread = true;
     index_thread.detach();
 
     // Widgets
-    var text_input: TextInput = .init(allocator, &vx.unicode);
+    var text_input: TextInput = .init(allocator);
     defer text_input.deinit();
 
     // Run main loop
     var pos: u64 = 0;
     var solution_count: u64 = 0;
-    var sol = (try PCSolution.readOne(reader)) orelse return;
+    var sol = (try PCSolution.readOne(&reader.interface)) orelse return;
     while (true) {
-        const event = loop.nextEvent();
+        const event = try loop.nextEvent();
         switch (event) {
             .key_press => |key| blk: {
                 // Exit on ctrl+c or ctrl+d
@@ -139,18 +142,18 @@ pub fn main(allocator: Allocator, args: DisplayArgs, path: []const u8) !void {
 
                 const trimmed = std.mem.trim(u8, text, " ");
                 if (std.fmt.parseInt(u64, trimmed, 10)) |n| {
-                    if (try seekToSolution(pc_file, n -| 1, solution_index)) {
-                        sol = (try PCSolution.readOne(reader)) orelse return;
+                    if (try seekToSolution(&reader, n -| 1, solution_index)) {
+                        sol = (try PCSolution.readOne(&reader.interface)) orelse return;
                         pos = n -| 1;
                     }
                 } else |_| if (text.len == 0) {
                     // Go to next solution if the input is empty.
-                    sol = (try PCSolution.readOne(reader)) orelse return;
+                    sol = (try PCSolution.readOne(&reader.interface)) orelse return;
                     pos += 1;
                 }
             },
             .solution_count => |count| solution_count = count,
-            .winsize => |ws| try vx.resize(allocator, stdout, ws),
+            .winsize => |ws| try vx.resize(allocator, &stdout.interface, ws),
         }
 
         const win = vx.window();
@@ -243,12 +246,12 @@ pub fn main(allocator: Allocator, args: DisplayArgs, path: []const u8) !void {
             .height = 1,
         }));
 
-        try vx.render(stdout);
-        try bf.flush();
+        try vx.render(&stdout.interface);
+        try stdout.flush();
     }
 }
 
-fn nextSolution(reader: AnyReader) u64 {
+fn nextSolution(reader: *std.Io.Reader) u64 {
     const solution = (PCSolution.readOne(reader) catch return 0) orelse
         return 0;
     return 8 + @as(u64, solution.next.len) - 1;
@@ -258,48 +261,46 @@ fn nextSolution(reader: AnyReader) u64 {
 // This greatly improves the performance of seeking to a solution.
 // Due to the time needed to index the file, this is done in a separate thread.
 fn indexThread(
+    io: std.Io,
     should_stop: *const bool,
     path: []const u8,
     solution_index: *SolutionIndex,
     loop: *Loop,
 ) !void {
-    const pc_file = try std.fs.cwd().openFile(path, .{});
-    defer pc_file.close();
-    var bf = io.bufferedReader(pc_file.reader());
-    const reader = bf.reader().any();
+    const pc_file = try std.Io.Dir.cwd().openFile(io, path, .{});
+    defer pc_file.close(io);
+    var buf: [8192]u8 = undefined;
+    var reader = pc_file.reader(io, &buf);
 
     var pos: u64 = 0;
     var count: u64 = 0;
     while (!should_stop.*) : (count += 1) {
-        const len = nextSolution(reader);
+        const len = nextSolution(&reader.interface);
         if (len == 0) {
             break;
         }
 
         if (count != 0 and count % INDEX_INTERVAL == 0) {
             solution_index.appendAssumeCapacity(pos);
-            loop.postEvent(.{ .solution_count = count });
+            try loop.postEvent(.{ .solution_count = count });
         }
 
         pos += len;
     }
 
-    loop.postEvent(.{ .solution_count = count });
+    try loop.postEvent(.{ .solution_count = count });
 }
 
-fn seekToSolution(file: File, n: u64, solution_index: SolutionIndex) !bool {
-    const old_pos = try file.getPos();
+fn seekToSolution(file: *File.Reader, n: u64, solution_index: SolutionIndex) !bool {
+    const old_pos = file.logicalPos();
 
     // Get closest index before n
     const index = @min(solution_index.items.len - 1, n / INDEX_INTERVAL);
     var pos = solution_index.items[index];
     try file.seekTo(pos);
 
-    var bf = io.bufferedReader(file.reader());
-    const reader = bf.reader().any();
-
     for (index * INDEX_INTERVAL..n) |_| {
-        const len = nextSolution(reader);
+        const len = nextSolution(&file.interface);
         if (len == 0) {
             try file.seekTo(old_pos);
             return false;
@@ -308,7 +309,7 @@ fn seekToSolution(file: File, n: u64, solution_index: SolutionIndex) !bool {
     }
 
     // Don't seek if we just passed the end of the file
-    if (nextSolution(reader) == 0) {
+    if (nextSolution(&file.interface) == 0) {
         try file.seekTo(old_pos);
         return false;
     }

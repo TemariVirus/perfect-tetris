@@ -1,6 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const expect = std.testing.expect;
+const BoundedArray = @import("bounded_array").BoundedArray;
 
 const engine = @import("engine");
 const BoardMask = engine.bit_masks.BoardMask;
@@ -21,7 +22,7 @@ const DistanceMap = @import("PiecePosSet.zig").PiecePosMap(.{ 10, 24, 4 }, u16);
 const PlacementQueue = @import("ring_queue.zig").RingQueue(PiecePosition);
 
 // 240 cells * 4 rotations - 1 = 959 moves at most
-pub const Path = std.BoundedArray(Move, 959);
+pub const Path = BoundedArray(Move, 959);
 
 /// Finds the sequence of moves with the least key presses that brings a piece from
 /// `from` to `to`, or to a position that is visually indistinguishable from `to`.

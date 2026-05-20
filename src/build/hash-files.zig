@@ -1,28 +1,27 @@
 const std = @import("std");
 
-pub fn main() !void {
-    var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
-    defer _ = debug_allocator.deinit();
-
-    var args = try std.process.argsWithAllocator(debug_allocator.allocator());
+pub fn main(init: std.process.Init) !void {
+    var args = try init.minimal.args.iterateAllocator(init.gpa);
     defer args.deinit();
     _ = args.skip(); // Executable path
 
-    const stdout = std.io.getStdOut().writer();
+    var stdout = std.Io.File.stdout().writer(init.io, &.{});
     while (args.next()) |path| {
-        const file = try std.fs.openFileAbsolute(path, .{});
-        defer file.close();
+        const file = try std.Io.Dir.cwd().openFile(init.io, path, .{});
+        defer file.close(init.io);
 
-        var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+        var hasher: std.crypto.hash.sha2.Sha256 = .init(.{});
         var buf: [4096]u8 = undefined;
         while (true) {
-            const n = try file.read(&buf);
-            if (n == 0) break;
+            const n = file.readStreaming(init.io, &.{&buf}) catch |err| switch (err) {
+                error.EndOfStream => break,
+                else => return err,
+            };
             hasher.update(buf[0..n]);
         }
 
-        try stdout.print("{s}  {s}\n", .{
-            std.fmt.fmtSliceHexLower(&hasher.finalResult()),
+        try stdout.interface.print("{s}  {s}\n", .{
+            std.fmt.bytesToHex(&hasher.finalResult(), .lower),
             std.fs.path.basename(path),
         });
     }

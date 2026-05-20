@@ -149,35 +149,40 @@ fn workerThread(comptime len: usize) fn (
 pub fn main() !void {
     const allocator = std.heap.smp_allocator;
 
-    var pool: std.Thread.Pool = undefined;
-    try pool.init(.{
-        .allocator = allocator,
+    var threaded: std.Io.Threaded = .init(allocator, .{
         .stack_size = 256 * 1024,
-        .track_ids = false,
     });
-    defer pool.deinit();
-    var wait_grp: std.Thread.WaitGroup = .{};
+    defer threaded.deinit();
+    const io = threaded.io();
 
     std.debug.print("| Length | Non-equivalent     | Duration   |\n", .{});
     std.debug.print("| ------ | ------------------ | ---------- |\n", .{});
 
+    const cpu_count = std.Thread.getCpuCount() catch 4;
     inline for (3..22) |n| {
-        wait_grp.reset();
+        var group: std.Io.Group = .init;
+        defer group.cancel(io);
+
         const Counter = SequenceCounter(n);
         var counter: Counter = .init();
         var count: std.atomic.Value(u64) = .init(0);
 
-        const start = std.time.nanoTimestamp();
-        for (0..pool.threads.len) |_| {
-            pool.spawnWg(&wait_grp, workerThread(n), .{ allocator, &counter, &count });
+        const start: std.Io.Timestamp = .now(io, .real);
+        for (0..cpu_count) |_| {
+            group.concurrent(io, workerThread(n), .{ allocator, &counter, &count }) catch {
+                workerThread(n)(allocator, &counter, &count);
+                break;
+            };
         }
-        wait_grp.wait();
-        const time_taken: u64 = @intCast(std.time.nanoTimestamp() - start);
+        try group.await(io);
+        const time_taken = start.untilNow(io, .real);
 
-        std.debug.print("| {d:<6} | {d:<18} | {f:<10} |\n", .{
+        var time_buf: [34]u8 = undefined;
+        const time_taken_str = std.fmt.bufPrint(&time_buf, "{f}", .{time_taken}) catch unreachable;
+        std.debug.print("| {d:<6} | {d:<18} | {s:<10} |\n", .{
             n - 1,
             count.raw,
-            std.fmt.fmtDuration(time_taken),
+            time_taken_str,
         });
     }
 }

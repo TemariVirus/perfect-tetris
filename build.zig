@@ -7,7 +7,11 @@ pub fn build(b: *Build) void {
 
     // Expose the library root
     const root_module = libModule(b, target, optimize);
-    b.modules.put(b.dupe("perfect-tetris"), root_module) catch @panic("OOM");
+    b.modules.put(
+        b.allocator,
+        b.dupe("perfect-tetris"),
+        root_module,
+    ) catch @panic("OOM");
 
     // Install step
     const exe = pcExecutable(b, "pc", target, optimize);
@@ -24,6 +28,7 @@ pub fn build(b: *Build) void {
 
 const Dependency = enum {
     args,
+    bounded_array,
     engine,
     nterm,
     vaxis,
@@ -56,47 +61,45 @@ fn importDependencies(
 }
 
 fn packageVersion(b: *Build) []const u8 {
-    var ast = std.zig.Ast.parse(b.allocator, @embedFile("build.zig.zon"), .zon) catch
-        @panic("OOM");
-    defer ast.deinit(b.allocator);
-
-    var buf: [2]std.zig.Ast.Node.Index = undefined;
-    const zon = ast.fullStructInit(&buf, ast.nodes.items(.data)[0].lhs) orelse
-        @panic("Failed to parse build.zig.zon");
-
-    for (zon.ast.fields) |field| {
-        const field_name = ast.tokenSlice(ast.firstToken(field) - 2);
-        if (std.mem.eql(u8, field_name, "version")) {
-            const version_string = ast.tokenSlice(ast.firstToken(field));
-            // Remove surrounding quotes
-            return version_string[1 .. version_string.len - 1];
-        }
-    }
-    @panic("Field 'version' missing from build.zig.zon");
+    const BuildZigZon = struct {
+        version: []const u8,
+    };
+    const build_zig_zon = std.zon.parse.fromSliceAlloc(
+        BuildZigZon,
+        b.allocator,
+        @embedFile("build.zig.zon"),
+        null,
+        .{ .ignore_unknown_fields = true },
+    ) catch @panic("String field 'version' missing from build.zig.zon");
+    return build_zig_zon.version;
 }
 
 fn minifyJson(b: *Build, path: Build.LazyPath) Build.LazyPath {
     const minify_exe = b.addExecutable(.{
         .name = "minify-json",
-        .root_source_file = b.path("src/build/minify-json.zig"),
-        .target = b.resolveTargetQuery(
-            Build.parseTargetQuery(.{ .arch_os_abi = "native" }) catch unreachable,
-        ),
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/build/minify-json.zig"),
+            .target = b.resolveTargetQuery(
+                Build.parseTargetQuery(.{ .arch_os_abi = "native" }) catch unreachable,
+            ),
+        }),
     });
 
     const minify_cmd = b.addRunArtifact(minify_exe);
     minify_cmd.expectExitCode(0);
     minify_cmd.addFileArg(path);
-    return minify_cmd.captureStdOut();
+    return minify_cmd.captureStdOut(.{});
 }
 
 fn hashFiles(b: *Build, files: []const Build.LazyPath) Build.LazyPath {
     const hash_exe = b.addExecutable(.{
         .name = "hash-files",
-        .root_source_file = b.path("src/build/hash-files.zig"),
-        .target = b.resolveTargetQuery(
-            Build.parseTargetQuery(.{ .arch_os_abi = "native" }) catch unreachable,
-        ),
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/build/hash-files.zig"),
+            .target = b.resolveTargetQuery(
+                Build.parseTargetQuery(.{ .arch_os_abi = "native" }) catch unreachable,
+            ),
+        }),
     });
 
     const hash_cmd = b.addRunArtifact(hash_exe);
@@ -104,7 +107,7 @@ fn hashFiles(b: *Build, files: []const Build.LazyPath) Build.LazyPath {
     for (files) |file| {
         hash_cmd.addFileArg(file);
     }
-    return hash_cmd.captureStdOut();
+    return hash_cmd.captureStdOut(.{});
 }
 
 fn libModule(
@@ -113,7 +116,7 @@ fn libModule(
     optimize: std.builtin.OptimizeMode,
 ) *Build.Module {
     const mod = b.createModule(.{ .root_source_file = b.path("src/root.zig") });
-    importDependencies(mod, &.{ .engine, .zmai }, target, optimize);
+    importDependencies(mod, &.{ .bounded_array, .engine, .zmai }, target, optimize);
     mod.addAnonymousImport("nn_4l_json", .{
         .root_source_file = minifyJson(b, b.path("NNs/Fast3.json")),
     });
@@ -267,8 +270,8 @@ fn countSeqStep(b: *Build, target: Build.ResolvedTarget, optimize: std.builtin.O
 fn releaseStep(b: *Build) void {
     const step = b.step("release", "Build release binaries");
 
-    var files: std.ArrayList(Build.LazyPath) = .init(b.allocator);
-    defer files.deinit();
+    var files: std.ArrayList(Build.LazyPath) = .empty;
+    defer files.deinit(b.allocator);
 
     inline for (.{
         .{ .triple = "x86_64-linux", .cpu = "x86_64" },
@@ -297,7 +300,7 @@ fn releaseStep(b: *Build) void {
         });
         step.dependOn(&install.step);
 
-        files.append(exe.getEmittedBin()) catch @panic("OOM");
+        files.append(b.allocator, exe.getEmittedBin()) catch @panic("OOM");
     }
 
     const checksums = b.addInstallFile(hashFiles(b, files.items), "release/sha256.txt");

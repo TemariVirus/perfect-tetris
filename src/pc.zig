@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
+const BoundedArray = @import("bounded_array").BoundedArray;
 
 const engine = @import("engine");
 const Facing = engine.pieces.Facing;
@@ -83,9 +84,9 @@ pub fn Generic(
             const queues = try options.allocator.alloc(movegen.MoveQueue, max_pieces);
             defer options.allocator.free(queues);
             for (queues) |*q| {
-                q.* = .init(options.allocator, {});
+                q.* = .empty;
             }
-            defer for (queues) |*q| q.deinit();
+            defer for (queues) |*q| q.deinit(options.allocator);
             const do_o_rotations = hasOKicks(options.kicks);
 
             // 20 is the lowest common multiple of the width of the playfield (10) and
@@ -103,6 +104,7 @@ pub fn Generic(
                 }
 
                 if (try findPcInner(
+                    options.allocator,
                     board_mask,
                     options.pieces[0..@min(options.pieces.len, pieces_needed + 1)],
                     queues[0..pieces_needed],
@@ -127,6 +129,7 @@ pub fn Generic(
         }
 
         fn findPcInner(
+            allocator: Allocator,
             playfield: TBoardMask,
             pieces: []PieceKind,
             queues: []movegen.MoveQueue,
@@ -179,6 +182,7 @@ pub fn Generic(
             );
             // TODO: Prune based on piece dependencies?
             try movegen.orderMoves(
+                allocator,
                 &queues[0],
                 playfield,
                 pieces[0],
@@ -198,6 +202,7 @@ pub fn Generic(
                     @intCast(max_height),
                 );
                 try movegen.orderMoves(
+                    allocator,
                     &queues[0],
                     playfield,
                     pieces[1],
@@ -209,7 +214,7 @@ pub fn Generic(
                 );
             }
 
-            while (queues[0].removeOrNull()) |move| {
+            while (queues[0].pop()) |move| {
                 const placement = move.placement;
                 // Hold if needed
                 if (placement.piece.kind != pieces[0]) {
@@ -230,6 +235,7 @@ pub fn Generic(
 
                 const new_height = max_height - cleared;
                 if (try findPcInner(
+                    allocator,
                     board,
                     pieces[1..],
                     queues[1..],
@@ -482,13 +488,15 @@ const SevenBag = engine.bags.SevenBag;
 
 test "4-line PC" {
     const allocator = std.testing.allocator;
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    const io = threaded.io();
 
     var gamestate: GameState(SevenBag) = .init(
         SevenBag.init(0),
         &engine.kicks.srsPlus,
     );
 
-    const nn: NN = try .load(allocator, "NNs/Fast3.json");
+    const nn: NN = try .load(io, allocator, "NNs/Fast3.json");
     defer nn.deinit(allocator);
 
     const placements = try allocator.alloc(Placement, 10);
@@ -524,8 +532,10 @@ test "4-line PC" {
 
 test "4-line PC with hold and no leftover pieces" {
     const allocator = std.testing.allocator;
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    const io = threaded.io();
 
-    const nn: NN = try .load(allocator, "NNs/Fast3.json");
+    const nn: NN = try .load(io, allocator, "NNs/Fast3.json");
     defer nn.deinit(allocator);
 
     const pieces = [_]PieceKind{ .o, .z, .i, .l, .j, .t, .s, .s, .j, .l };
@@ -543,7 +553,7 @@ test "4-line PC with hold and no leftover pieces" {
     }, placements);
     try expect(solution.len == 10);
 
-    var pieces_remaining: std.BoundedArray(PieceKind, 10) = try .fromSlice(&pieces);
+    var pieces_remaining: BoundedArray(PieceKind, 10) = try .fromSlice(&pieces);
     var gamestate: GameState(root.FixedBag) = .init(
         .{ .pieces = &(pieces ++ pieces) },
         &engine.kicks.srs,
@@ -569,13 +579,15 @@ test "4-line PC with hold and no leftover pieces" {
 
 test "6-line PC" {
     const allocator = std.testing.allocator;
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    const io = threaded.io();
 
     var gamestate: GameState(SevenBag) = .init(
         SevenBag.init(0),
         &engine.kicks.srsPlus,
     );
 
-    const nn: NN = try .load(allocator, "NNs/Fast3.json");
+    const nn: NN = try .load(io, allocator, "NNs/Fast3.json");
     defer nn.deinit(allocator);
 
     const placements = try allocator.alloc(Placement, 15);
@@ -611,8 +623,10 @@ test "6-line PC" {
 
 test "Not enough pieces for save hold" {
     const allocator = std.testing.allocator;
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    const io = threaded.io();
 
-    const nn: NN = try .load(allocator, "NNs/Fast3.json");
+    const nn: NN = try .load(io, allocator, "NNs/Fast3.json");
     defer nn.deinit(allocator);
 
     var pieces = [1]PieceKind{.o} ** 5;

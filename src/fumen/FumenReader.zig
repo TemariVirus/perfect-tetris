@@ -1,9 +1,8 @@
 const std = @import("std");
 const Allocator = mem.Allocator;
-const AnyWriter = std.io.AnyWriter;
+const Writer = std.Io.Writer;
 const assert = std.debug.assert;
 const mem = std.mem;
-const unicode = std.unicode;
 
 const engine = @import("engine");
 const BoardMask = engine.bit_masks.BoardMask;
@@ -168,13 +167,13 @@ pub const ParsedFumen = struct {
         }
 
         if (reader.current) |current| {
-            try reader.next.append(current);
+            try reader.next.append(reader.allocator, current);
         }
         mem.reverse(PieceKind, reader.next.items);
         if (reader.next.items.len == 0) {
             return FumenError.NotQuiz;
         }
-        const next = try reader.next.toOwnedSlice();
+        const next = try reader.next.toOwnedSlice(reader.allocator);
 
         return .{
             .reader = reader.*,
@@ -184,7 +183,7 @@ pub const ParsedFumen = struct {
         };
     }
 
-    pub fn deinit(self: ParsedFumen, allocator: Allocator) void {
+    pub fn deinit(self: *ParsedFumen, allocator: Allocator) void {
         self.reader.deinit();
         allocator.free(self.next);
     }
@@ -204,8 +203,8 @@ const QuizWriter = struct {
     buf: [4]u8 = undefined,
     pos: usize = 0,
 
-    fn writeRaw(self: *QuizWriter, writer: AnyWriter, char: u8) !void {
-        assert(std.mem.indexOfScalar(u8, caption_decode, char) != null);
+    fn writeRaw(self: *QuizWriter, writer: *Writer, char: u8) !void {
+        assert(mem.indexOfScalar(u8, caption_decode, char) != null);
         if (self.pos == 4) {
             var v: u32 = 0;
             for (0..4) |i| {
@@ -220,11 +219,11 @@ const QuizWriter = struct {
         self.pos += 1;
     }
 
-    pub fn write(self: *QuizWriter, writer: AnyWriter, char: u8) !void {
+    pub fn write(self: *QuizWriter, writer: *Writer, char: u8) !void {
         // Assumes char is part of a quiz
-        assert(std.mem.indexOfScalar(u8, "#Q=[]()IOTLJSZ", char) != null);
+        assert(mem.indexOfScalar(u8, "#Q=[]()IOTLJSZ", char) != null);
 
-        if (std.mem.indexOfScalar(u8, "#=[]()", char) == null) {
+        if (mem.indexOfScalar(u8, "#=[]()", char) == null) {
             try self.writeRaw(writer, char);
             return;
         }
@@ -238,7 +237,7 @@ const QuizWriter = struct {
 
     pub fn writeAll(
         self: *QuizWriter,
-        writer: AnyWriter,
+        writer: *Writer,
         char: []const u8,
     ) !void {
         for (char) |c| {
@@ -246,7 +245,7 @@ const QuizWriter = struct {
         }
     }
 
-    pub fn flush(self: *QuizWriter, writer: AnyWriter) !void {
+    pub fn flush(self: *QuizWriter, writer: *Writer) !void {
         if (self.pos == 0) {
             return;
         }
@@ -281,13 +280,13 @@ pub fn outputFumen(
     args: FumenArgs,
     parsed: ParsedFumen,
     solution: []const Placement,
-    writer: AnyWriter,
+    writer: *Writer,
 ) !void {
     // Initialise fumen
     const input = parsed.reader.data;
-    const start = std.mem.lastIndexOf(u8, input, "115@") orelse
+    const start = mem.lastIndexOf(u8, input, "115@") orelse
         unreachable; // Already checked in FumenReader.init
-    const end = if (std.mem.indexOfScalar(u8, input[start..], '#')) |i|
+    const end = if (mem.indexOfScalar(u8, input[start..], '#')) |i|
         start + i
     else
         input.len;
@@ -368,12 +367,12 @@ fn init(allocator: Allocator, fumen: []const u8) FumenError!FumenReader {
         .allocator = allocator,
         // + 4 to skip the "115@" prefix
         .data = fumen[start + 4 .. end],
-        .next = .init(allocator),
+        .next = .empty,
     };
 }
 
-fn deinit(self: FumenReader) void {
-    self.next.deinit();
+fn deinit(self: *FumenReader) void {
+    self.next.deinit(self.allocator);
 }
 
 fn done(self: *FumenReader) bool {
@@ -519,7 +518,7 @@ fn readPieceAndFlags(self: *FumenReader) FumenError!struct {
 }
 
 fn writePieceAndFlags(
-    writer: AnyWriter,
+    writer: *Writer,
     p: Placement,
     has_caption: bool,
     color: bool,
@@ -557,7 +556,7 @@ fn writePieceAndFlags(
 fn readCaption(self: *FumenReader) AllocOrFumenError![]u8 {
     const len = try self.poll(2);
     var caption: std.ArrayList(u8) = try .initCapacity(self.allocator, len);
-    errdefer caption.deinit();
+    errdefer caption.deinit(self.allocator);
 
     var i: u32 = 0;
     while (i < len) : (i += 4) {
@@ -604,13 +603,13 @@ fn readCaption(self: *FumenReader) AllocOrFumenError![]u8 {
             ) catch return FumenError.InvalidCaption;
         };
         write +=
-            unicode.utf8Encode(codepoint, caption.items[write..]) catch
+            std.unicode.utf8Encode(codepoint, caption.items[write..]) catch
                 return FumenError.InvalidCaption;
         continue;
     }
 
     caption.items.len = write;
-    return try caption.toOwnedSlice();
+    return try caption.toOwnedSlice(self.allocator);
 }
 
 fn readPieceKind(char: u8) ?PieceKind {
@@ -664,7 +663,7 @@ fn readQuiz(self: *FumenReader, caption: []const u8) AllocOrFumenError!void {
 
     self.next.clearRetainingCapacity();
     // Leave an empty slot for the current piece
-    try self.next.ensureTotalCapacityPrecise(caption.len - i + 1);
+    try self.next.ensureTotalCapacityPrecise(self.allocator, caption.len - i + 1);
     for (i..caption.len) |j| {
         const piece_kind = readPieceKind(caption[j]) orelse
             return FumenError.InvalidPieceLetter;
@@ -686,7 +685,7 @@ fn pieceKindStr(piece: PieceKind) u8 {
 }
 
 fn writeQuiz(
-    writer: AnyWriter,
+    writer: *Writer,
     hold: ?PieceKind,
     next: []const PieceKind,
 ) !void {

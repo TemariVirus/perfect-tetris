@@ -120,17 +120,18 @@ pub const FumenArgs = struct {
 };
 
 pub fn main(
+    io: std.Io,
     allocator: Allocator,
     args: FumenArgs,
     fumen: []const u8,
     nn: ?NN,
 ) !void {
-    const start_t = std.time.nanoTimestamp();
+    const start: std.Io.Timestamp = .now(io, .real);
 
-    const stdout = std.io.getStdOut().writer();
-    const stderr = std.io.getStdErr().writer();
+    var stdout = std.Io.File.stdout().writer(io, &.{});
+    var stderr = std.Io.File.stderr().writer(io, &.{});
 
-    const parsed = try FumenReader.parse(allocator, fumen);
+    var parsed = try FumenReader.parse(allocator, fumen);
     defer parsed.deinit(allocator);
 
     const gamestate = parsed.toGameState(args.kicks.toEngine());
@@ -149,29 +150,29 @@ pub fn main(
         {
             return err;
         }
-        try stdout.print("Unable to solve: {}\n", .{err});
+        try stdout.interface.print("Unable to solve: {}\n", .{err});
         break :blk null;
     };
     defer if (solution) |sol| {
         allocator.free(sol);
     };
-    const time_taken = std.time.nanoTimestamp() - start_t;
+    const time_taken = start.untilNow(io, .real);
 
     // Print output fumen
     if (solution) |sol| {
-        try FumenReader.outputFumen(args, parsed, sol, stdout.any());
+        try FumenReader.outputFumen(args, parsed, sol, &stdout.interface);
     }
 
     if (args.verbose) {
         if (solution) |sol| {
-            try stderr.print(
-                "Found solution of length {} in {}\n",
-                .{ sol.len, std.fmt.fmtDuration(@intCast(time_taken)) },
+            try stderr.interface.print(
+                "Found solution of length {} in {f}\n",
+                .{ sol.len, time_taken },
             );
         } else {
-            try stderr.print(
-                "No solution found in {}\n",
-                .{std.fmt.fmtDuration(@intCast(time_taken))},
+            try stderr.interface.print(
+                "No solution found in {f}\n",
+                .{time_taken},
             );
         }
     }

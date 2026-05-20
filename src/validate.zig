@@ -33,20 +33,21 @@ pub const ValidateArgs = struct {
     };
 };
 
-pub fn main(args: ValidateArgs, path: []const u8) !void {
+pub fn main(io: std.Io, args: ValidateArgs, path: []const u8) !void {
     _ = args; // autofix
 
-    const file = try std.fs.cwd().openFile(path, .{});
-    defer file.close();
+    const file = try std.Io.Dir.cwd().openFile(io, path, .{});
+    defer file.close(io);
 
-    try std.io.getStdOut().writer().print("Validating {s}\n", .{path});
+    var stdout = std.Io.File.stdout().writer(io, &.{});
+    try stdout.interface.print("Validating {s}\n", .{path});
 
     var solution_count: u64 = 0;
-    var buf_reader = std.io.bufferedReader(file.reader());
-    const reader = buf_reader.reader();
-    while (try PCSolution.readOne(reader.any())) |solution| {
+    var buf: [16 * 1024]u8 = undefined;
+    var reader = file.reader(io, &buf);
+    while (try PCSolution.readOne(&reader.interface)) |solution| {
         if (solution.next.len == 0) {
-            try printValidationError(file, buf_reader, solution_count);
+            try printValidationError(&stdout.interface, reader, solution_count);
             return;
         }
 
@@ -58,7 +59,7 @@ pub fn main(args: ValidateArgs, path: []const u8) !void {
             const info = state.lockCurrent(-1);
             // Last move must be a PC
             if (i == solution.placements.len - 1 and !info.pc) {
-                try printValidationError(file, buf_reader, solution_count);
+                try printValidationError(&stdout.interface, reader, solution_count);
                 return;
             }
         }
@@ -66,22 +67,20 @@ pub fn main(args: ValidateArgs, path: []const u8) !void {
         solution_count += 1;
     }
 
-    try std.io.getStdOut().writer().print(
+    try stdout.interface.print(
         "Validated {} solutions. All solutions ok.\n",
         .{solution_count},
     );
 }
 
 fn printValidationError(
-    file: std.fs.File,
-    buf_reader: anytype,
+    stdout: *std.Io.Writer,
+    file: std.Io.File.Reader,
     solution_count: u64,
 ) !void {
-    const bytes = try file.getPos() -
-        @as(u64, @intCast(buf_reader.end)) +
-        @as(u64, @intCast(buf_reader.start));
-    try std.io.getStdOut().writer().print(
-        "Error at solution {} (byte {})\n",
+    const bytes = file.logicalPos();
+    try stdout.print(
+        "Error at solution {d} (byte {d})\n",
         .{ solution_count, bytes },
     );
 }

@@ -8,7 +8,7 @@ pub const pc_slow = @import("slow/pc.zig");
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const AnyReader = std.io.AnyReader;
+const BoundedArray = @import("bounded_array").BoundedArray;
 const assert = std.debug.assert;
 const json = std.json;
 
@@ -23,19 +23,22 @@ const Position = engine.pieces.Position;
 const NNInner = @import("zmai").genetic.neat.NN;
 
 var default_nn: ?NN = null;
-var load_default_nn = std.once((struct {
-    var buffer: [1024]u8 = undefined;
+const load_default_nn = (struct {
+    var buffer: [1152]u8 = undefined;
 
     pub fn load() void {
-        var fba = std.heap.FixedBufferAllocator.init(&buffer);
-        default_nn = loadNNFromStr(
-            fba.allocator(),
-            @embedFile("nn_4l_json"),
-        ) catch unreachable;
+        if (default_nn == null) {
+            @branchHint(.cold);
+            var fba: std.heap.FixedBufferAllocator = .init(&buffer);
+            default_nn = loadNNFromStr(
+                fba.allocator(),
+                @embedFile("nn_4l_json"),
+            ) catch unreachable;
+        }
     }
-}).load);
+}).load;
 pub fn defaultNN(allocator: Allocator) Allocator.Error!NN {
-    load_default_nn.call();
+    load_default_nn();
     return try default_nn.?.clone(allocator);
 }
 
@@ -50,9 +53,9 @@ pub const NN = struct {
     net: NNInner,
     inputs_used: [INPUT_COUNT]bool,
 
-    pub fn load(allocator: Allocator, path: []const u8) !NN {
+    pub fn load(io: std.Io, allocator: Allocator, path: []const u8) !NN {
         var inputs_used: [INPUT_COUNT]bool = undefined;
-        const nn: NNInner = try .load(allocator, path, &inputs_used);
+        const nn: NNInner = try .load(io, allocator, path, &inputs_used);
         return .{
             .net = nn,
             .inputs_used = inputs_used,
@@ -110,8 +113,8 @@ pub const FixedBag = struct {
 pub const PCSolution = struct {
     /// The maximum length of a next sequence in a `.pc` file.
     pub const MAX_SEQ_LEN = 16;
-    pub const NextArray = std.BoundedArray(PieceKind, MAX_SEQ_LEN);
-    pub const PlacementArray = std.BoundedArray(Placement, MAX_SEQ_LEN - 1);
+    pub const NextArray = BoundedArray(PieceKind, MAX_SEQ_LEN);
+    pub const PlacementArray = BoundedArray(Placement, MAX_SEQ_LEN - 1);
 
     next: NextArray = .{},
     placements: PlacementArray = .{},
@@ -119,14 +122,14 @@ pub const PCSolution = struct {
     /// Reads the next perfect clear solution from the reader, assuming the
     /// reader is reading a `.pc` file. If the reader is at the end of the
     /// file, this function returns `null`.
-    pub fn readOne(reader: AnyReader) !?PCSolution {
-        const seq = reader.readInt(u48, .little) catch |e| {
+    pub fn readOne(reader: *std.Io.Reader) !?PCSolution {
+        const seq = reader.takeInt(u48, .little) catch |e| {
             if (e == error.EndOfStream) {
                 return null;
             }
             return e;
         };
-        const holds = try reader.readInt(u16, .little);
+        const holds = try reader.takeInt(u16, .little);
 
         var solution: PCSolution = .{};
         solution.next = unpackNext(seq);
@@ -144,7 +147,7 @@ pub const PCSolution = struct {
                 current = temp;
             }
 
-            const placement = try reader.readByte();
+            const placement = try reader.takeByte();
             const facing: Facing = @enumFromInt(@as(u2, @truncate(placement)));
             const piece: Piece = .{ .facing = facing, .kind = current };
             const canon_pos = placement >> 2;
@@ -351,12 +354,12 @@ pub fn findPcAuto(
     return try allocator.realloc(placements, solution.len);
 }
 
-pub fn loadNNFromStr(allocator: Allocator, json_str: []const u8) !NN {
+fn loadNNFromStr(allocator: Allocator, json_str: []const u8) !NN {
     const obj = try json.parseFromSlice(
         NNInner.NNJson,
         allocator,
         json_str,
-        .{},
+        .{ .allocate = .alloc_if_needed },
     );
     defer obj.deinit();
 

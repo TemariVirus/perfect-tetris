@@ -140,8 +140,7 @@ This project currently uses Zig 0.13.0.
 zig build run -- COMMAND [ARGS] [INPUT]
 ```
 
-Runs the main program. Refer to [usage](#usage) for more information. The `-Dstrip`
-option may be passed to the compiler to produce a smaller binary.
+Runs the main program. Refer to [usage](#usage) for more information.
 
 ### Solve
 
