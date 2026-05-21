@@ -200,7 +200,6 @@ pub const FindPcError = error{
     ImpossibleSaveHold,
     NoPcExists,
     OutOfMemory,
-    Overflow,
     SolutionTooLong,
 };
 
