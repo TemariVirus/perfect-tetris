@@ -219,21 +219,21 @@ pub fn minPcInfo(playfield: BoardMask) ?struct {
         }
         break :blk set;
     };
-    const empty_cells = BoardMask.WIDTH * height - bits_set;
+    var empty_cells = BoardMask.WIDTH * height - bits_set;
 
     // Assumes that all pieces have 4 cells and that the playfield is 10 cells wide.
     // Thus, an odd number of empty cells means that a perfect clear is impossible.
     if (empty_cells % 2 == 1) {
         return null;
     }
+    // If the number of empty cells is not a multiple of 4, we need to fill
+    // an extra row so that it becomes a multiple of 4
+    if (empty_cells % 4 == 2) {
+        empty_cells += 10;
+        height += 1;
+    }
 
-    var pieces_needed = if (empty_cells % 4 == 2)
-        // If the number of empty cells is not a multiple of 4, we need to fill
-        // an extra so that it becomes a multiple of 4
-        // 2 + 10 = 12 which is a multiple of 4
-        (empty_cells + 10) / 4
-    else
-        empty_cells / 4;
+    var pieces_needed = empty_cells / 4;
     // Don't return an empty solution
     if (pieces_needed == 0) {
         pieces_needed = 5;
@@ -327,7 +327,29 @@ pub fn loadNNFromStr(allocator: Allocator, json_str: []const u8) !NN {
 // Needed for tests to be reachable
 const PiecePosSet = @import("PiecePosSet.zig");
 const ring_queue = @import("ring_queue.zig");
+const testing = std.testing;
 
 test {
     std.testing.refAllDecls(@This());
+}
+
+test minPcInfo {
+    var playfield: BoardMask = .{};
+    var info = minPcInfo(playfield);
+    try testing.expect(info != null);
+    try testing.expectEqual(2, info.?.height);
+    try testing.expectEqual(5, info.?.pieces_needed);
+
+    playfield = .{};
+    playfield.rows[0] |= 0b0000001000 << 1;
+    info = minPcInfo(playfield);
+    try testing.expect(info == null);
+
+    playfield = .{};
+    playfield.rows[1] |= 0b0110000010 << 1;
+    playfield.rows[0] |= 0b1100000001 << 1;
+    info = minPcInfo(playfield);
+    try testing.expect(info != null);
+    try testing.expectEqual(3, info.?.height);
+    try testing.expectEqual(6, info.?.pieces_needed);
 }
