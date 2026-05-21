@@ -98,6 +98,20 @@ pub const NN = struct {
     }
 };
 
+pub const FixedBag = struct {
+    pieces: []const PieceKind,
+    index: usize = 0,
+
+    pub fn next(self: *FixedBag) PieceKind {
+        if (self.index >= self.pieces.len) {
+            return undefined;
+        }
+
+        defer self.index += 1;
+        return self.pieces[self.index];
+    }
+};
+
 pub const PCSolution = struct {
     /// The maximum length of a next sequence in a `.pc` file.
     pub const MAX_SEQ_LEN = 16;
