@@ -212,7 +212,7 @@ pub fn allPlacements(
     piece_kind: PieceKind,
     max_height: u6,
 ) PiecePosSet {
-    return allPlacementsRaw(
+    return allPlacementsGeneric(
         PiecePosSet,
         PiecePosition,
         PlacementStack,
@@ -225,7 +225,7 @@ pub fn allPlacements(
     );
 }
 
-pub fn allPlacementsRaw(
+pub fn allPlacementsGeneric(
     comptime TPiecePosSet: type,
     comptime TPiecePosition: type,
     comptime TPlacementStack: type,

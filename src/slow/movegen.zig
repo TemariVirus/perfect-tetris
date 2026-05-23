@@ -37,7 +37,7 @@ pub fn allPlacements(
     piece_kind: PieceKind,
     max_height: u7,
 ) PiecePosSet {
-    return root.movegen.allPlacementsRaw(
+    return root.movegen.allPlacementsGeneric(
         PiecePosSet,
         PiecePosition,
         PlacementStack,

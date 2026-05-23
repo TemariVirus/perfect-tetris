@@ -1,30 +1,23 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
-const expect = std.testing.expect;
 
 const engine = @import("engine");
 const Facing = engine.pieces.Facing;
-const GameState = engine.GameState;
 const KickFn = engine.kicks.KickFn;
 const PieceKind = engine.pieces.PieceKind;
 const Rotation = engine.kicks.Rotation;
-const SevenBag = engine.bags.SevenBag;
 
 const root = @import("root.zig");
 const BoardMask = root.bit_masks.BoardMask;
-const movegen = root.movegen;
 const NN = root.NN;
-const PieceMask = root.bit_masks.PieceMask;
 const Placement = root.Placement;
+const FindPcError = root.FindPcError;
 
 const SearchNode = packed struct {
     playfield: u60,
     held: PieceKind,
 };
-const NodeSet = std.AutoHashMap(SearchNode, void);
-
-const FindPcError = root.FindPcError;
 
 pub const Options = struct {
     /// Allocator to use for scratch allocations.
@@ -48,6 +41,227 @@ pub const Options = struct {
     save_hold: ?PieceKind = null,
 };
 
+pub fn Generic(
+    comptime movegen: anytype,
+    comptime TBoardMask: type,
+    comptime TSearchNode: type,
+    comptime makeSearchNode: fn (TBoardMask, u7, PieceKind) TSearchNode,
+    comptime validFn: anytype,
+    comptime scoreFn: anytype,
+    comptime height_limit: u7,
+) type {
+    return struct {
+        pub fn findPc(
+            board_mask: TBoardMask,
+            options: Options,
+            placements: []Placement,
+        ) FindPcError![]Placement {
+            // TODO: what if we don't use an arena?
+            var arena: std.heap.ArenaAllocator = .init(options.allocator);
+            defer arena.deinit();
+            const arena_allocator = arena.allocator();
+
+            const pc_info = root.minPcInfo(options.playfield) orelse
+                return FindPcError.NoPcExists;
+            var pieces_needed: u16 = pc_info.pieces_needed;
+            var max_height: u7 = pc_info.height;
+            const max_pieces = @min(placements.len, options.pieces.len);
+
+            if (options.save_hold) |hold| {
+                // Jump to until the first piece that matches the save hold
+                const min_pieces: u64 = std.mem.indexOfScalar(PieceKind, options.pieces, hold) orelse
+                    return FindPcError.ImpossibleSaveHold;
+                if (pieces_needed < min_pieces) {
+                    const extra = (min_pieces - pieces_needed + 4) / 5;
+                    if (2 * extra + max_height > std.math.maxInt(u7)) {
+                        return FindPcError.SolutionTooLong;
+                    }
+                    pieces_needed += @intCast(5 * extra);
+                    max_height += @intCast(2 * extra);
+                }
+            }
+
+            var cache: std.AutoHashMap(TSearchNode, void) = .init(options.allocator);
+            defer cache.deinit();
+
+            // Pre-allocate a queue for each placement
+            const queues = try arena_allocator.alloc(movegen.MoveQueue, max_pieces);
+            for (0..queues.len) |i| {
+                queues[i] = .init(arena_allocator, {});
+            }
+            const do_o_rotations = hasOKicks(options.kicks);
+
+            // 20 is the lowest common multiple of the width of the playfield (10) and
+            // the number of cells in a piece (4). 20 / 4 = 5 extra pieces for each
+            // bigger perfect clear.
+            while (pieces_needed <= max_pieces and max_height <= height_limit) : ({
+                pieces_needed += 5;
+                max_height = std.math.add(u7, max_height, 2) catch break;
+            }) {
+                if (max_height < options.min_height) {
+                    continue;
+                }
+
+                if (try findPcInner(
+                    board_mask,
+                    options.pieces[0..@min(options.pieces.len, pieces_needed + 1)],
+                    queues[0..pieces_needed],
+                    placements[0..pieces_needed],
+                    do_o_rotations,
+                    options.kicks,
+                    &cache,
+                    options.nn,
+                    max_height,
+                    options.save_hold,
+                )) {
+                    return placements[0..pieces_needed];
+                }
+
+                cache.clearRetainingCapacity();
+                for (queues) |*queue| {
+                    queue.clearRetainingCapacity();
+                }
+            }
+
+            return FindPcError.SolutionTooLong;
+        }
+
+        fn findPcInner(
+            playfield: TBoardMask,
+            pieces: []PieceKind,
+            queues: []movegen.MoveQueue,
+            placements: []Placement,
+            do_o_rotations: bool,
+            kicks: *const KickFn,
+            cache: *std.AutoHashMap(TSearchNode, void),
+            nn: NN,
+            max_height: u7,
+            save_hold: ?PieceKind,
+        ) Allocator.Error!bool {
+            assert(max_height <= height_limit);
+            // Base case; check for perfect clear
+            if (placements.len == 0) {
+                return max_height == 0;
+            }
+
+            const node: TSearchNode = makeSearchNode(playfield, max_height, pieces[0]);
+            if ((try cache.getOrPut(node)).found_existing) {
+                return false;
+            }
+
+            // Check if requested hold piece is in queue/hold
+            const can_hold = if (save_hold) |hold| blk: {
+                const idx = std.mem.lastIndexOfScalar(PieceKind, pieces, hold) orelse
+                    return false;
+                break :blk idx >= 2 or (pieces.len > 1 and pieces[0] == pieces[1]);
+            } else true;
+
+            var held_odd_times = false;
+            // Unhold if held an odd number of times so that pieces are in the same order
+            defer if (held_odd_times) {
+                std.mem.swap(PieceKind, &pieces[0], &pieces[1]);
+            };
+
+            // Check for forced hold
+            if (!can_hold and pieces.len > 1 and pieces[1] != save_hold.?) {
+                std.mem.swap(PieceKind, &pieces[0], &pieces[1]);
+                held_odd_times = !held_odd_times;
+            }
+
+            // Add moves to queue
+            queues[0].clearRetainingCapacity();
+            const m1 = movegen.allPlacements(
+                playfield,
+                do_o_rotations,
+                kicks,
+                pieces[0],
+                @intCast(max_height),
+            );
+            // TODO: Prune based on piece dependencies?
+            try movegen.orderMoves(
+                &queues[0],
+                playfield,
+                pieces[0],
+                m1,
+                @intCast(max_height),
+                validFn,
+                nn,
+                scoreFn,
+            );
+            // Check for unique hold
+            if (can_hold and pieces.len > 1 and pieces[0] != pieces[1]) {
+                const m2 = movegen.allPlacements(
+                    playfield,
+                    do_o_rotations,
+                    kicks,
+                    pieces[1],
+                    @intCast(max_height),
+                );
+                try movegen.orderMoves(
+                    &queues[0],
+                    playfield,
+                    pieces[1],
+                    m2,
+                    @intCast(max_height),
+                    validFn,
+                    nn,
+                    scoreFn,
+                );
+            }
+
+            while (queues[0].removeOrNull()) |move| {
+                const placement = move.placement;
+                // Hold if needed
+                if (placement.piece.kind != pieces[0]) {
+                    std.mem.swap(PieceKind, &pieces[0], &pieces[1]);
+                    held_odd_times = !held_odd_times;
+                }
+                assert(pieces[0] == placement.piece.kind);
+
+                var board = playfield;
+                board.place(
+                    switch (TBoardMask) {
+                        engine.bit_masks.BoardMask => placement.piece.mask(),
+                        else => .from(placement.piece),
+                    },
+                    placement.pos,
+                );
+                const cleared = board.clearLines(placement.pos.y);
+
+                const new_height = max_height - cleared;
+                if (try findPcInner(
+                    board,
+                    pieces[1..],
+                    queues[1..],
+                    placements[1..],
+                    do_o_rotations,
+                    kicks,
+                    cache,
+                    nn,
+                    new_height,
+                    save_hold,
+                )) {
+                    @branchHint(.unlikely);
+                    placements[0] = placement;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    };
+}
+
+fn makeNode(playfield: BoardMask, max_height: u7, held: PieceKind) SearchNode {
+    assert(max_height <= 6);
+    return .{
+        // Shift mask up to encode `max_height`
+        .playfield = @truncate(playfield.mask <<
+            @intCast((BoardMask.HEIGHT - max_height) * BoardMask.WIDTH)),
+        .held = held,
+    };
+}
+
 /// Finds a perfect clear with the least number of placements possible, and
 /// returns the sequence of placements required to achieve it. The placements
 /// are stored in `placements`.
@@ -58,60 +272,19 @@ pub fn findPc(
     options: Options,
     placements: []Placement,
 ) FindPcError![]Placement {
-    var arena: std.heap.ArenaAllocator = .init(options.allocator);
-    defer arena.deinit();
-    const arena_allocator = arena.allocator();
-
-    const playfield: BoardMask = .from(options.playfield);
-    const pc_info = root.minPcInfo(options.playfield) orelse
-        return FindPcError.NoPcExists;
-    var pieces_needed = pc_info.pieces_needed;
-    var max_height = pc_info.height;
-    const max_pieces = @min(placements.len, options.pieces.len);
-
-    var cache: NodeSet = .init(arena_allocator);
-
-    // Pre-allocate a queue for each placement
-    const queues = try arena_allocator.alloc(movegen.MoveQueue, max_pieces);
-    for (0..queues.len) |i| {
-        queues[i] = .init(arena_allocator, {});
-    }
-    const do_o_rotations = hasOKicks(options.kicks);
-
-    // 20 is the lowest common multiple of the width of the playfield (10) and
-    // the number of cells in a piece (4). 20 / 4 = 5 extra pieces for each
-    // bigger perfect clear.
-    while (pieces_needed <= max_pieces and max_height <= 6) : ({
-        pieces_needed += 5;
-        max_height += 2;
-    }) {
-        if (max_height < options.min_height) {
-            continue;
-        }
-
-        if (try findPcInner(
-            playfield,
-            options.pieces[0..@min(options.pieces.len, pieces_needed + 1)],
-            queues[0..pieces_needed],
-            placements[0..pieces_needed],
-            do_o_rotations,
-            options.kicks,
-            &cache,
-            options.nn,
-            @intCast(max_height),
-            options.save_hold,
-        )) {
-            return placements[0..pieces_needed];
-        }
-
-        // Clear cache and queues
-        cache.clearRetainingCapacity();
-        for (queues) |*queue| {
-            queue.clearRetainingCapacity();
-        }
-    }
-
-    return FindPcError.SolutionTooLong;
+    return Generic(
+        root.movegen,
+        BoardMask,
+        SearchNode,
+        makeNode,
+        isPcPossible,
+        orderScore,
+        6,
+    ).findPc(
+        BoardMask.from(options.playfield),
+        options,
+        placements,
+    );
 }
 
 /// Returns `true` if an O piece could be affected by kicks. Otherwise, `false`.
@@ -128,128 +301,6 @@ pub fn hasOKicks(kicks: *const KickFn) bool {
             }
         }
     }
-    return false;
-}
-
-fn findPcInner(
-    playfield: BoardMask,
-    pieces: []PieceKind,
-    queues: []movegen.MoveQueue,
-    placements: []Placement,
-    do_o_rotations: bool,
-    kicks: *const KickFn,
-    cache: *NodeSet,
-    nn: NN,
-    max_height: u3,
-    save_hold: ?PieceKind,
-) Allocator.Error!bool {
-    // Base case; check for perfect clear
-    if (placements.len == 0) {
-        return max_height == 0;
-    }
-
-    const node: SearchNode = .{
-        // Shift mask up to encode `max_height`
-        .playfield = @truncate(playfield.mask <<
-            (@as(u6, BoardMask.HEIGHT - max_height) * BoardMask.WIDTH)),
-        .held = pieces[0],
-    };
-    if ((try cache.getOrPut(node)).found_existing) {
-        return false;
-    }
-
-    // Check if requested hold piece is in queue/hold
-    const can_hold = if (save_hold) |hold| blk: {
-        const idx = std.mem.lastIndexOfScalar(PieceKind, pieces, hold) orelse
-            return false;
-        break :blk idx >= 2 or (pieces.len > 1 and pieces[0] == pieces[1]);
-    } else true;
-
-    var held_odd_times = false;
-    // Unhold if held an odd number of times so that pieces are in the same order
-    defer if (held_odd_times) {
-        std.mem.swap(PieceKind, &pieces[0], &pieces[1]);
-    };
-
-    // Check for forced hold
-    if (!can_hold and pieces.len > 1 and pieces[1] != save_hold.?) {
-        std.mem.swap(PieceKind, &pieces[0], &pieces[1]);
-        held_odd_times = !held_odd_times;
-    }
-
-    // Add moves to queue
-    queues[0].clearRetainingCapacity();
-    const m1 = movegen.allPlacements(
-        playfield,
-        do_o_rotations,
-        kicks,
-        pieces[0],
-        max_height,
-    );
-    // TODO: Prune based on piece dependencies?
-    try movegen.orderMoves(
-        &queues[0],
-        playfield,
-        pieces[0],
-        m1,
-        max_height,
-        isPcPossible,
-        nn,
-        orderScore,
-    );
-    // Check for unique hold
-    if (can_hold and pieces.len > 1 and pieces[0] != pieces[1]) {
-        const m2 = movegen.allPlacements(
-            playfield,
-            do_o_rotations,
-            kicks,
-            pieces[1],
-            max_height,
-        );
-        try movegen.orderMoves(
-            &queues[0],
-            playfield,
-            pieces[1],
-            m2,
-            max_height,
-            isPcPossible,
-            nn,
-            orderScore,
-        );
-    }
-
-    while (queues[0].removeOrNull()) |move| {
-        const placement = move.placement;
-        // Hold if needed
-        if (placement.piece.kind != pieces[0]) {
-            std.mem.swap(PieceKind, &pieces[0], &pieces[1]);
-            held_odd_times = !held_odd_times;
-        }
-        assert(pieces[0] == placement.piece.kind);
-
-        var board = playfield;
-        board.place(.from(placement.piece), placement.pos);
-        const cleared = board.clearLines(placement.pos.y);
-
-        const new_height = max_height - cleared;
-        if (try findPcInner(
-            board,
-            pieces[1..],
-            queues[1..],
-            placements[1..],
-            do_o_rotations,
-            kicks,
-            cache,
-            nn,
-            new_height,
-            save_hold,
-        )) {
-            @branchHint(.unlikely);
-            placements[0] = placement;
-            return true;
-        }
-    }
-
     return false;
 }
 
@@ -424,6 +475,10 @@ fn orderScore(playfield: BoardMask, max_height: u3, nn: NN) f32 {
     const features = getFeatures(playfield, max_height, nn.inputs_used);
     return nn.predict(features);
 }
+
+const expect = std.testing.expect;
+const GameState = engine.GameState;
+const SevenBag = engine.bags.SevenBag;
 
 test "4-line PC" {
     const allocator = std.testing.allocator;
