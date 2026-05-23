@@ -287,7 +287,7 @@ pub fn getPieces(
 ///
 /// `min_height` determines the minimum height of the perfect clear.
 ///
-/// `max_len` determines the maximum number of placements.
+/// `max_lookahead` determines the maximum number of pieces to look ahead.
 ///
 /// That piece that must be in the hold slot at the end of the solution.
 /// Ignored if `null`.
@@ -300,10 +300,10 @@ pub fn findPcAuto(
     game: GameState(BagType),
     nn: ?NN,
     min_height: u7,
-    max_len: usize,
+    max_lookahead: u9,
     save_hold: ?PieceKind,
 ) FindPcError![]Placement {
-    const placements = try allocator.alloc(Placement, max_len);
+    const placements = try allocator.alloc(Placement, max_lookahead);
     errdefer allocator.free(placements);
     const height = @max(
         min_height,
@@ -313,7 +313,7 @@ pub fn findPcAuto(
     const resolved_nn = nn orelse try defaultNN(allocator);
     defer if (nn == null) resolved_nn.deinit(allocator);
 
-    const pieces = try getPieces(BagType, allocator, game, placements.len + 1);
+    const pieces = try getPieces(BagType, allocator, game, max_lookahead);
     defer allocator.free(pieces);
 
     // Use fast pc if possible

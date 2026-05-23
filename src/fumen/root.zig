@@ -140,7 +140,7 @@ pub fn main(
         gamestate,
         nn,
         args.@"min-height",
-        parsed.next.len,
+        std.math.lossyCast(u9, parsed.next.len),
         PieceKindArg.toEngine(args.save),
     ) catch |err| blk: {
         if (err != FindPcError.ImpossibleSaveHold and

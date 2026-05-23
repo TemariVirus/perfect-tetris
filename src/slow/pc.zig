@@ -58,7 +58,7 @@ pub fn findPc(
     // bigger perfect clear.
     while (pieces_needed <= max_pieces) : ({
         pieces_needed += 5;
-        max_height += 2;
+        max_height = std.math.add(u7, max_height, 2) catch break;
     }) {
         if (max_height < options.min_height) {
             continue;

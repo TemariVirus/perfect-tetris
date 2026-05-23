@@ -318,8 +318,8 @@ fn pcThread(nn: ?NN, min_height: u7, state: GameState, auto: *AutoPlayer) !void 
     const allocator = auto.allocator;
     var game = state;
     // A 2- or 4-line PC is not always possible. 15 placements is enough
-    // for a 6-line PC.
-    const max_len = @max(15, ((@as(usize, min_height) + 1) * 10 / 4));
+    // for a 6-line PC. Add 1 lookahead for holds
+    const max_lookahead = 1 + @max(15, ((@as(u9, min_height) + 1) * 10 / 4));
 
     while (true) {
         auto.solve_signal.wait();
@@ -330,7 +330,7 @@ fn pcThread(nn: ?NN, min_height: u7, state: GameState, auto: *AutoPlayer) !void 
             game,
             nn,
             min_height,
-            max_len,
+            max_lookahead,
             null,
         );
         defer allocator.free(solution);
