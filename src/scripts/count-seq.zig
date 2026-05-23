@@ -117,7 +117,7 @@ fn SequenceCounter(comptime len: usize) type {
                 return null;
             }
 
-            for (0..len) |i| {
+            for (0..lock_len) |i| {
                 digits[i] = @intCast(value % LockIter.base);
                 value /= LockIter.base;
             }

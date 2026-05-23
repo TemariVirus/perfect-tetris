@@ -10,7 +10,6 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const AnyReader = std.io.AnyReader;
 const assert = std.debug.assert;
-const expect = std.testing.expect;
 const json = std.json;
 
 const engine = @import("engine");
@@ -35,7 +34,7 @@ var load_default_nn = std.once((struct {
         ) catch unreachable;
     }
 }).load);
-pub fn defaultNN(allocator: Allocator) !NN {
+pub fn defaultNN(allocator: Allocator) Allocator.Error!NN {
     load_default_nn.call();
     return try default_nn.?.clone(allocator);
 }
@@ -71,7 +70,7 @@ pub const NN = struct {
     }
 
     /// Creates a deep copy of the neural network.
-    pub fn clone(self: NN, allocator: Allocator) !NN {
+    pub fn clone(self: NN, allocator: Allocator) Allocator.Error!NN {
         const nodes = try allocator.dupe(NNInner.Node, self.net.nodes);
         errdefer allocator.free(nodes);
 
@@ -103,10 +102,6 @@ pub const FixedBag = struct {
     index: usize = 0,
 
     pub fn next(self: *FixedBag) PieceKind {
-        if (self.index >= self.pieces.len) {
-            return undefined;
-        }
-
         defer self.index += 1;
         return self.pieces[self.index];
     }
@@ -246,7 +241,47 @@ pub fn minPcInfo(playfield: BoardMask) ?struct {
     };
 }
 
-/// Finds a perfect clear with the least number of pieces possible for the
+/// Extracts `pieces_count` pieces from the game state, in the format
+/// [current, hold, next...].
+pub fn getPieces(
+    comptime BagType: type,
+    allocator: Allocator,
+    game: GameState(BagType),
+    pieces_count: usize,
+) Allocator.Error![]PieceKind {
+    if (pieces_count == 0) {
+        return &.{};
+    }
+
+    var pieces = try allocator.alloc(PieceKind, pieces_count);
+    errdefer allocator.free(pieces);
+    pieces[0] = game.current.kind;
+    if (pieces_count == 1) {
+        return pieces;
+    }
+
+    const start: usize = if (game.hold_kind) |hold| blk: {
+        pieces[1] = hold;
+        break :blk 2;
+    } else 1;
+
+    for (game.next_pieces, start..) |piece, i| {
+        if (i >= pieces.len) {
+            break;
+        }
+        pieces[i] = piece;
+    }
+
+    // If next pieces are not enough, fill the rest from the bag
+    var bag_copy = game.bag;
+    for (@min(pieces.len, start + game.next_pieces.len)..pieces.len) |i| {
+        pieces[i] = bag_copy.next();
+    }
+
+    return pieces;
+}
+
+/// Finds a perfect clear with the least number of placements possible for the
 /// given game state, and returns the sequence of placements required to
 /// achieve it.
 ///
@@ -254,11 +289,11 @@ pub fn minPcInfo(playfield: BoardMask) ?struct {
 ///
 /// `max_len` determines the maximum number of placements.
 ///
-/// `save_hold` determines what piece must be in the hold slot at the end of
-/// the sequence. If `save_hold` is `null`, this constraint is ignored.
+/// That piece that must be in the hold slot at the end of the solution.
+/// Ignored if `null`.
 ///
-/// Returns an error if no perfect clear exists, or if the number of pieces
-/// needed exceeds `max_len`.
+/// Returns an error if a perfect clear is impossible for the given options, or
+/// if the number of placements needed exceeds `max_len`.
 pub fn findPcAuto(
     comptime BagType: type,
     allocator: Allocator,
@@ -278,31 +313,40 @@ pub fn findPcAuto(
     const resolved_nn = nn orelse try defaultNN(allocator);
     defer if (nn == null) resolved_nn.deinit(allocator);
 
+    const pieces = try getPieces(BagType, allocator, game, placements.len + 1);
+    defer allocator.free(pieces);
+
     // Use fast pc if possible
     if (height <= 6) {
         if (pc.findPc(
-            BagType,
-            allocator,
-            game,
-            resolved_nn,
-            @intCast(height),
+            .{
+                .allocator = allocator,
+                .playfield = game.playfield,
+                .pieces = pieces,
+                .kicks = game.kicks,
+                .min_height = height,
+                .nn = resolved_nn,
+                .save_hold = save_hold,
+            },
             placements,
-            save_hold,
         )) |solution| {
             return try allocator.realloc(placements, solution.len);
-        } else |e| if (e != FindPcError.SolutionTooLong) {
-            return e;
+        } else |err| if (err != FindPcError.SolutionTooLong) {
+            return err;
         }
     }
 
     const solution = try pc_slow.findPc(
-        BagType,
-        allocator,
-        game,
-        resolved_nn,
-        @max(7, height),
+        .{
+            .allocator = allocator,
+            .playfield = game.playfield,
+            .pieces = pieces,
+            .kicks = game.kicks,
+            .min_height = @max(7, height),
+            .nn = resolved_nn,
+            .save_hold = save_hold,
+        },
         placements,
-        save_hold,
     );
     return try allocator.realloc(placements, solution.len);
 }

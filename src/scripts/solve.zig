@@ -473,14 +473,17 @@ fn solveThread(buf: *SolutionBuffer) !void {
 
         var solved: usize = 0;
         for (sequences) |seq| {
+            var next_pieces = PCSolution.unpackNext(seq);
             _ = pc.findPc(
-                SevenBag,
-                allocator,
-                gameWithPieces(PCSolution.unpackNext(seq)),
-                nn,
-                HEIGHT,
+                .{
+                    .allocator = allocator,
+                    .playfield = .{},
+                    .pieces = next_pieces.slice(),
+                    .kicks = engine.kicks.srs,
+                    .min_height = HEIGHT,
+                    .nn = nn,
+                },
                 &solutions[solved],
-                null,
             ) catch |e| if (e == root.FindPcError.SolutionTooLong) {
                 continue;
             } else {
@@ -494,22 +497,4 @@ fn solveThread(buf: *SolutionBuffer) !void {
         sol_count.store(@intCast(solved), .monotonic);
         try buf.writeDoneChunks(SAVE_PATH);
     }
-}
-
-fn gameWithPieces(pieces: PCSolution.NextArray) GameState {
-    assert(pieces.len >= 2);
-
-    var game: GameState = .init(.init(0), engine.kicks.srs);
-    game.hold_kind = pieces.buffer[0];
-    game.current.kind = pieces.buffer[1];
-
-    for (0..@min(pieces.len - 2, game.next_pieces.len)) |i| {
-        game.next_pieces[i] = pieces.buffer[i + 2];
-    }
-    game.bag.context.index = 0;
-    for (0..pieces.len -| 9) |i| {
-        game.bag.context.pieces[i] = pieces.buffer[i + 9];
-    }
-
-    return game;
 }

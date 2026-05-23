@@ -26,69 +26,80 @@ const NodeSet = std.AutoHashMap(SearchNode, void);
 
 const FindPcError = root.FindPcError;
 
-pub fn findPc(
-    comptime BagType: type,
+pub const Options = struct {
+    /// Allocator to use for scratch allocations.
     allocator: Allocator,
-    game: GameState(BagType),
+    /// The current state of the playfield.
+    playfield: engine.bit_masks.BoardMask,
+    /// The current piece queue. This is mutable for performance reasons, but
+    /// the original state of the slice is restored upon function exit.
+    ///
+    /// The `getPieces` helper function extracts the queue from the game state
+    /// into the correct format `[current, hold, next...]`.
+    pieces: []PieceKind,
+    /// Kick system to use.
+    kicks: *const KickFn,
+    /// Minimum height of the perfect clear to find.
+    min_height: u7 = 0,
+    /// NN to use as heuristic.
     nn: NN,
-    min_height: u3,
+    /// That piece that must be in the hold slot at the end of the solution.
+    /// Ignored if `null`.
+    save_hold: ?PieceKind = null,
+};
+
+/// Finds a perfect clear with the least number of placements possible, and
+/// returns the sequence of placements required to achieve it. The placements
+/// are stored in `placements`.
+///
+/// Returns an error if a perfect clear is impossible for the given options, or
+/// if the number of placements needed exceeds `placements.len`.
+pub fn findPc(
+    options: Options,
     placements: []Placement,
-    save_hold: ?PieceKind,
 ) FindPcError![]Placement {
-    var arena: std.heap.ArenaAllocator = .init(allocator);
+    var arena: std.heap.ArenaAllocator = .init(options.allocator);
     defer arena.deinit();
     const arena_allocator = arena.allocator();
 
-    const playfield: BoardMask = .from(game.playfield);
-    const pc_info = root.minPcInfo(game.playfield) orelse
+    const playfield: BoardMask = .from(options.playfield);
+    const pc_info = root.minPcInfo(options.playfield) orelse
         return FindPcError.NoPcExists;
     var pieces_needed = pc_info.pieces_needed;
     var max_height = pc_info.height;
-
-    const pieces = try getPieces(BagType, arena_allocator, game, placements.len + 1);
-
-    if (save_hold) |hold| {
-        // Requested hold piece is not in queue/hold
-        for (pieces) |p| {
-            if (p == hold) {
-                break;
-            }
-        } else {
-            return FindPcError.ImpossibleSaveHold;
-        }
-    }
+    const max_pieces = @min(placements.len, options.pieces.len);
 
     var cache: NodeSet = .init(arena_allocator);
 
     // Pre-allocate a queue for each placement
-    const queues = try arena_allocator.alloc(movegen.MoveQueue, placements.len);
+    const queues = try arena_allocator.alloc(movegen.MoveQueue, max_pieces);
     for (0..queues.len) |i| {
         queues[i] = .init(arena_allocator, {});
     }
-    const do_o_rotations = hasOKicks(game.kicks);
+    const do_o_rotations = hasOKicks(options.kicks);
 
     // 20 is the lowest common multiple of the width of the playfield (10) and
     // the number of cells in a piece (4). 20 / 4 = 5 extra pieces for each
     // bigger perfect clear.
-    while (pieces_needed <= placements.len and max_height <= 6) {
-        defer pieces_needed += 5;
-        defer max_height += 2;
-
-        if (max_height < min_height) {
+    while (pieces_needed <= max_pieces and max_height <= 6) : ({
+        pieces_needed += 5;
+        max_height += 2;
+    }) {
+        if (max_height < options.min_height) {
             continue;
         }
 
         if (try findPcInner(
             playfield,
-            pieces[0 .. pieces_needed + 1],
+            options.pieces[0..@min(options.pieces.len, pieces_needed + 1)],
             queues[0..pieces_needed],
             placements[0..pieces_needed],
             do_o_rotations,
-            game.kicks,
+            options.kicks,
             &cache,
-            nn,
+            options.nn,
             @intCast(max_height),
-            save_hold,
+            options.save_hold,
         )) {
             return placements[0..pieces_needed];
         }
@@ -96,50 +107,11 @@ pub fn findPc(
         // Clear cache and queues
         cache.clearRetainingCapacity();
         for (queues) |*queue| {
-            queue.items.len = 0;
+            queue.clearRetainingCapacity();
         }
     }
 
     return FindPcError.SolutionTooLong;
-}
-
-/// Extracts `pieces_count` pieces from the game state, in the format
-/// [current, hold, next...].
-pub fn getPieces(
-    comptime BagType: type,
-    allocator: Allocator,
-    game: GameState(BagType),
-    pieces_count: usize,
-) ![]PieceKind {
-    if (pieces_count == 0) {
-        return &.{};
-    }
-
-    var pieces = try allocator.alloc(PieceKind, pieces_count);
-    pieces[0] = game.current.kind;
-    if (pieces_count == 1) {
-        return pieces;
-    }
-
-    const start: usize = if (game.hold_kind) |hold| blk: {
-        pieces[1] = hold;
-        break :blk 2;
-    } else 1;
-
-    for (game.next_pieces, start..) |piece, i| {
-        if (i >= pieces.len) {
-            break;
-        }
-        pieces[i] = piece;
-    }
-
-    // If next pieces are not enough, fill the rest from the bag
-    var bag_copy = game.bag;
-    for (@min(pieces.len, start + game.next_pieces.len)..pieces.len) |i| {
-        pieces[i] = bag_copy.next();
-    }
-
-    return pieces;
 }
 
 /// Returns `true` if an O piece could be affected by kicks. Otherwise, `false`.
@@ -170,7 +142,7 @@ fn findPcInner(
     nn: NN,
     max_height: u3,
     save_hold: ?PieceKind,
-) !bool {
+) Allocator.Error!bool {
     // Base case; check for perfect clear
     if (placements.len == 0) {
         return max_height == 0;
@@ -193,15 +165,20 @@ fn findPcInner(
         break :blk idx >= 2 or (pieces.len > 1 and pieces[0] == pieces[1]);
     } else true;
 
-    // Check for forced hold
     var held_odd_times = false;
-    if (!can_hold and pieces[1] != save_hold.?) {
+    // Unhold if held an odd number of times so that pieces are in the same order
+    defer if (held_odd_times) {
+        std.mem.swap(PieceKind, &pieces[0], &pieces[1]);
+    };
+
+    // Check for forced hold
+    if (!can_hold and pieces.len > 1 and pieces[1] != save_hold.?) {
         std.mem.swap(PieceKind, &pieces[0], &pieces[1]);
         held_odd_times = !held_odd_times;
     }
 
     // Add moves to queue
-    queues[0].items.len = 0;
+    queues[0].clearRetainingCapacity();
     const m1 = movegen.allPlacements(
         playfield,
         do_o_rotations,
@@ -273,10 +250,6 @@ fn findPcInner(
         }
     }
 
-    // Unhold if held an odd number of times so that pieces are in the same order
-    if (held_odd_times) {
-        std.mem.swap(PieceKind, &pieces[0], &pieces[1]);
-    }
     return false;
 }
 
@@ -466,15 +439,18 @@ test "4-line PC" {
     const placements = try allocator.alloc(Placement, 10);
     defer allocator.free(placements);
 
-    const solution = try findPc(
-        SevenBag,
-        allocator,
-        gamestate,
-        nn,
-        4,
-        placements,
-        .s,
-    );
+    const pieces = try root.getPieces(SevenBag, allocator, gamestate, placements.len + 1);
+    defer allocator.free(pieces);
+
+    const solution = try findPc(.{
+        .allocator = allocator,
+        .playfield = gamestate.playfield,
+        .pieces = pieces,
+        .kicks = gamestate.kicks,
+        .min_height = 4,
+        .nn = nn,
+        .save_hold = .s,
+    }, placements);
     try expect(solution.len == 10);
     for (solution, 0..) |placement, i| {
         if (gamestate.current.kind != placement.piece.kind) {
@@ -505,15 +481,18 @@ test "6-line PC" {
     const placements = try allocator.alloc(Placement, 15);
     defer allocator.free(placements);
 
-    const solution = try findPc(
-        SevenBag,
-        allocator,
-        gamestate,
-        nn,
-        6,
-        placements,
-        .s,
-    );
+    const pieces = try root.getPieces(SevenBag, allocator, gamestate, placements.len + 1);
+    defer allocator.free(pieces);
+
+    const solution = try findPc(.{
+        .allocator = allocator,
+        .playfield = gamestate.playfield,
+        .pieces = pieces,
+        .kicks = gamestate.kicks,
+        .min_height = 6,
+        .nn = nn,
+        .save_hold = .s,
+    }, placements);
     try expect(solution.len == 15);
     for (solution, 0..) |placement, i| {
         if (gamestate.current.kind != placement.piece.kind) {

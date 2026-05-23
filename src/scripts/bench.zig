@@ -100,29 +100,40 @@ pub fn pcBenchmark(
             SevenBag.init(i),
             &engine.kicks.srsPlus,
         );
+        const pieces = try root.getPieces(
+            SevenBag,
+            allocator,
+            gamestate,
+            1 + height * 10 / 4,
+        );
+        defer allocator.free(pieces);
         var arena: std.heap.ArenaAllocator = .init(allocator);
         defer arena.deinit();
 
         const solve_start = time.nanoTimestamp();
         const solution = if (slow)
             try pc_slow.findPc(
-                SevenBag,
-                arena.allocator(),
-                gamestate,
-                nn,
-                height,
+                .{
+                    .allocator = arena.allocator(),
+                    .playfield = gamestate.playfield,
+                    .pieces = pieces,
+                    .kicks = gamestate.kicks,
+                    .min_height = height,
+                    .nn = nn,
+                },
                 placements,
-                null,
             )
         else
             try pc.findPc(
-                SevenBag,
-                arena.allocator(),
-                gamestate,
-                nn,
-                height,
+                .{
+                    .allocator = arena.allocator(),
+                    .playfield = gamestate.playfield,
+                    .pieces = pieces,
+                    .kicks = gamestate.kicks,
+                    .min_height = height,
+                    .nn = nn,
+                },
                 placements,
-                null,
             );
         times[i] = @intCast(time.nanoTimestamp() - solve_start);
         std.mem.doNotOptimizeAway(solution);
@@ -179,15 +190,24 @@ pub fn pathfindBenchmark() !void {
             SevenBag.init(i),
             &engine.kicks.srsPlus,
         );
-
-        const solution = try pc.findPc(
+        const pieces = try root.getPieces(
             SevenBag,
             allocator,
             gamestate,
-            nn,
-            HEIGHT,
+            1 + SOL_LEN,
+        );
+        defer allocator.free(pieces);
+
+        const solution = try pc.findPc(
+            .{
+                .allocator = allocator,
+                .playfield = gamestate.playfield,
+                .pieces = pieces,
+                .kicks = gamestate.kicks,
+                .min_height = HEIGHT,
+                .nn = nn,
+            },
             placements,
-            null,
         );
 
         for (solution, 0..) |placement, j| {

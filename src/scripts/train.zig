@@ -166,7 +166,7 @@ fn setupExitHandler() void {
             .flags = 0,
         };
         for (handle_signals) |sig| {
-            _ = os.linux.sigaction(sig, &action, null);
+            _ = os.linux.sigaction(@intCast(sig), &action, null);
         }
     }
 }
@@ -388,6 +388,8 @@ fn getFitness(allocator: Allocator, seed: u64, nn: NN) !f64 {
 
     const placements = try allocator.alloc(root.Placement, HEIGHT * 10 / 4);
     defer allocator.free(placements);
+    const pieces = try allocator.alloc(engine.pieces.PieceKind, placements.len + 1);
+    defer allocator.free(pieces);
 
     var rand: std.Random.DefaultPrng = .init(seed);
     var timer: time.Timer = try .start();
@@ -396,17 +398,21 @@ fn getFitness(allocator: Allocator, seed: u64, nn: NN) !f64 {
         var bag: SevenBag = .init(rand.next());
         bag.random.random().shuffle(engine.pieces.PieceKind, &bag.pieces);
         bag.index = bag.random.random().uintLessThan(u8, bag.pieces.len);
-        const gamestate: GameState = .init(bag, engine.kicks.srs);
+        for (pieces) |*p| {
+            p.* = bag.next();
+        }
 
         // Optimize for 4 line PCs
         const solution = pc.findPc(
-            SevenBag,
-            allocator,
-            gamestate,
-            nn,
-            HEIGHT,
+            .{
+                .allocator = allocator,
+                .playfield = .{},
+                .pieces = pieces,
+                .kicks = engine.kicks.srs,
+                .min_height = HEIGHT,
+                .nn = nn,
+            },
             placements,
-            null,
         ) catch |e| {
             if (e != root.FindPcError.SolutionTooLong) {
                 return e;
