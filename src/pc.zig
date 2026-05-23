@@ -56,11 +56,6 @@ pub fn Generic(
             options: Options,
             placements: []Placement,
         ) FindPcError![]Placement {
-            // TODO: what if we don't use an arena?
-            var arena: std.heap.ArenaAllocator = .init(options.allocator);
-            defer arena.deinit();
-            const arena_allocator = arena.allocator();
-
             const pc_info = root.minPcInfo(options.playfield) orelse
                 return FindPcError.NoPcExists;
             var pieces_needed: u16 = pc_info.pieces_needed;
@@ -85,10 +80,12 @@ pub fn Generic(
             defer cache.deinit();
 
             // Pre-allocate a queue for each placement
-            const queues = try arena_allocator.alloc(movegen.MoveQueue, max_pieces);
-            for (0..queues.len) |i| {
-                queues[i] = .init(arena_allocator, {});
+            const queues = try options.allocator.alloc(movegen.MoveQueue, max_pieces);
+            defer options.allocator.free(queues);
+            for (queues) |*q| {
+                q.* = .init(options.allocator, {});
             }
+            defer for (queues) |*q| q.deinit();
             const do_o_rotations = hasOKicks(options.kicks);
 
             // 20 is the lowest common multiple of the width of the playfield (10) and
