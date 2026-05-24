@@ -98,6 +98,9 @@ pub fn Generic(
                 if (max_height < options.min_height) {
                     continue;
                 }
+                if (options.save_hold != null and pieces_needed >= options.pieces.len) {
+                    return FindPcError.SolutionTooLong;
+                }
 
                 if (try findPcInner(
                     board_mask,
