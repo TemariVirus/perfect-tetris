@@ -15,22 +15,22 @@ pub fn main() !void {
     // Benchmark command:
     // zig build bench -Dcpu=x86_64_v3
 
-    // Mean: 10.72ms ± 26.766ms
-    // Max:  240.719ms
-    // Mean memory usage: 245.380KiB
-    // Max memory usage:  9.455MiB
+    // Mean: 10.474ms ± 25.961ms
+    // Max:  231.012ms
+    // Mean memory usage: 138.722KiB
+    // Max memory usage:  3.199MiB
     try pcBenchmark(4, "NNs/Fast3.json", false);
 
-    // Mean: 14.696ms ± 35.902ms
-    // Max:  322.321ms
-    // Mean memory usage: 1.372MiB
-    // Max memory usage:  51.335MiB
+    // Mean: 18.336ms ± 45.344ms
+    // Max:  404ms
+    // Mean memory usage: 847.522KiB
+    // Max memory usage:  26.424MiB
     try pcBenchmark(4, "NNs/Fast3.json", true);
 
-    // Mean: 9.28ms ± 21.23ms
-    // Max:  216.84ms
-    // Mean memory usage: 173.771KiB
-    // Max memory usage:  2.430MiB
+    // Mean: 9.196ms ± 20.969ms
+    // Max:  214.365ms
+    // Mean memory usage: 120.016KiB
+    // Max memory usage:  3.279MiB
     try pcBenchmark(6, "NNs/Fast3.json", false);
 
     // Mean: 7.88us ± 5.247us
