@@ -226,7 +226,7 @@ pub fn Generic(
                     },
                     placement.pos,
                 );
-                const cleared = board.clearLines(placement.pos.y);
+                const cleared = board.clearLines(0);
 
                 const new_height = max_height - cleared;
                 if (try findPcInner(

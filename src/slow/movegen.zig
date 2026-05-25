@@ -78,7 +78,7 @@ pub fn orderMoves(
     while (iter.next()) |placement| {
         var board = playfield;
         board.place(placement.piece.mask(), placement.pos);
-        const cleared = board.clearLines(placement.pos.y);
+        const cleared = board.clearLines(0);
         const new_height = max_height - cleared;
         if (!validFn(board.rows[0..@min(BoardMask.HEIGHT, new_height)])) {
             continue;

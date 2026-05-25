@@ -15,29 +15,29 @@ pub fn main() !void {
     // Benchmark command:
     // zig build bench -Dcpu=x86_64_v3
 
-    // Mean: 10.474ms ± 25.961ms
-    // Max:  231.012ms
+    // Mean: 10.342ms ± 25.7ms
+    // Max:  231.386ms
     // Mean memory usage: 138.722KiB
     // Max memory usage:  3.199MiB
     try pcBenchmark(4, "NNs/Fast3.json", false);
 
-    // Mean: 18.336ms ± 45.344ms
-    // Max:  404ms
+    // Mean: 17.139ms ± 41.975ms
+    // Max:  371.552ms
     // Mean memory usage: 847.522KiB
     // Max memory usage:  26.424MiB
     try pcBenchmark(4, "NNs/Fast3.json", true);
 
-    // Mean: 9.196ms ± 20.969ms
-    // Max:  214.365ms
+    // Mean: 9.022ms ± 20.68ms
+    // Max:  211.971ms
     // Mean memory usage: 120.016KiB
     // Max memory usage:  3.279MiB
     try pcBenchmark(6, "NNs/Fast3.json", false);
 
-    // Mean: 7.88us ± 5.247us
-    // Max:  41.9us
+    // Mean: 7.254us ± 4.819us
+    // Max:  58.031us
     try pathfindBenchmark();
 
-    // Mean: 43ns
+    // Mean: 42ns
     getFeaturesBenchmark();
 }
 

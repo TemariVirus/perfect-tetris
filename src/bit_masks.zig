@@ -72,9 +72,9 @@ pub const BoardMask = struct {
 
     /// Clears all filled lines in the playfield.
     /// Returns the number of lines cleared.
-    pub fn clearLines(self: *BoardMask, y: i8) u3 {
+    pub fn clearLines(self: *BoardMask, _: i8) u3 {
         var cleared: u3 = 0;
-        var i: usize = @max(0, y);
+        var i: usize = 0;
         var full_row = comptime (@as(u64, 1) << BoardMask.WIDTH) - 1;
         full_row = full_row << @intCast(i * WIDTH);
         while (i + cleared < HEIGHT) {
