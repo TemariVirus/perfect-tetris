@@ -522,6 +522,51 @@ test "4-line PC" {
     try expect(gamestate.hold_kind == .s);
 }
 
+test "4-line PC with hold and no leftover pieces" {
+    const allocator = std.testing.allocator;
+
+    const nn: NN = try .load(allocator, "NNs/Fast3.json");
+    defer nn.deinit(allocator);
+
+    const pieces = [_]PieceKind{ .o, .z, .i, .l, .j, .t, .s, .s, .j, .l };
+    const placements = try allocator.alloc(Placement, 10);
+    defer allocator.free(placements);
+
+    var piece_buf = pieces;
+    const solution = try findPc(.{
+        .allocator = allocator,
+        .playfield = .{},
+        .pieces = &piece_buf,
+        .kicks = &engine.kicks.srs,
+        .min_height = 4,
+        .nn = nn,
+    }, placements);
+    try expect(solution.len == 10);
+
+    var pieces_remaining: std.BoundedArray(PieceKind, 10) = try .fromSlice(&pieces);
+    var gamestate: GameState(root.FixedBag) = .init(
+        .{ .pieces = &(pieces ++ pieces) },
+        &engine.kicks.srs,
+    );
+    for (solution, 0..) |placement, i| {
+        if (gamestate.current.kind != placement.piece.kind) {
+            gamestate.hold();
+        }
+        try expect(gamestate.current.kind == placement.piece.kind);
+        const idx = std.mem.indexOfScalar(
+            PieceKind,
+            pieces_remaining.slice(),
+            placement.piece.kind,
+        ) orelse return error.NonExistentPiece;
+        _ = pieces_remaining.swapRemove(idx);
+        gamestate.current.facing = placement.piece.facing;
+
+        gamestate.pos = placement.pos;
+        try expect(gamestate.lockCurrent(-1).pc == (i + 1 == solution.len));
+        gamestate.nextPiece();
+    }
+}
+
 test "6-line PC" {
     const allocator = std.testing.allocator;
 
@@ -562,6 +607,30 @@ test "6-line PC" {
     }
 
     try expect(gamestate.hold_kind == .s);
+}
+
+test "Not enough pieces for save hold" {
+    const allocator = std.testing.allocator;
+
+    const nn: NN = try .load(allocator, "NNs/Fast3.json");
+    defer nn.deinit(allocator);
+
+    var pieces = [1]PieceKind{.o} ** 5;
+    const placements = try allocator.alloc(Placement, 5);
+    defer allocator.free(placements);
+
+    try std.testing.expectError(
+        FindPcError.SolutionTooLong,
+        findPc(.{
+            .allocator = allocator,
+            .playfield = .{},
+            .pieces = &pieces,
+            .kicks = &engine.kicks.srs,
+            .min_height = 2,
+            .nn = nn,
+            .save_hold = .o,
+        }, placements),
+    );
 }
 
 test isPcPossible {
